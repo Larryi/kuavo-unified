@@ -5,6 +5,7 @@ import sys
 import json
 import yaml
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -104,6 +105,27 @@ def _to_hwc_uint8(image: Any) -> np.ndarray:
     return arr
 
 
+class _ActionDimNormalizer:
+    """Keep upstream LingBot's hardcoded 14-D output aligned with Kuavo stats."""
+
+    def __init__(self, normalizer, action_dim: int):
+        self.normalizer = normalizer
+        self.action_dim = action_dim
+
+    def normalize(self, data):
+        return self.normalizer.normalize(data)
+
+    def unnormalize(self, data):
+        action = data.get("action")
+        if action is not None and action.shape[-1] != self.action_dim:
+            data = dict(data)
+            data["action"] = action[..., : self.action_dim]
+        return self.normalizer.unnormalize(data)
+
+    def __getattr__(self, name):
+        return getattr(self.normalizer, name)
+
+
 class LingbotDeployPolicy:
     """Adapter that exposes LingBot-VLA inference as `select_action(obs)`."""
 
@@ -132,41 +154,88 @@ class LingbotDeployPolicy:
         if qwen25_path:
             os.environ["QWEN25_PATH"] = qwen25_path
 
-        from deploy.lingbot_robotwin_policy import QwenPiServer  # type: ignore
+        import deploy.lingbot_robotwin_policy as lingbot_policy_module  # type: ignore
         from lingbotvla.data.vla_data.transform import Normalizer  # type: ignore
 
         self.model_path = str(model_path)
         self.task_prompt = task_prompt or "robot manipulation"
         self.execute_raw_action = execute_raw_action
-        self.policy = QwenPiServer(
-            path_to_pi_model=self.model_path,
-            use_length=use_length,
-            chunk_ret=chunk_ret,
-            use_bf16=True,
-            use_fp32=False,
-        )
+
+        # QwenPiServer hardcodes data_type="robotwin" during its initial
+        # Normalizer construction. Kuavo checkpoints use flat LeRobot stats,
+        # so inject the configured type before model construction rather than
+        # waiting for the post-load normalizer override below.
+        upstream_normalizer = lingbot_policy_module.Normalizer
+
+        def make_normalizer(*args, **kwargs):
+            kwargs["data_type"] = data_type
+            return upstream_normalizer(*args, **kwargs)
+
+        lingbot_policy_module.Normalizer = make_normalizer
+        try:
+            self.policy = lingbot_policy_module.QwenPiServer(
+                path_to_pi_model=self.model_path,
+                use_length=use_length,
+                chunk_ret=chunk_ret,
+                use_bf16=True,
+                use_fp32=False,
+            )
+        finally:
+            lingbot_policy_module.Normalizer = upstream_normalizer
+
         if norm_stats_file:
             with open(norm_stats_file, "r", encoding="utf-8") as f:
                 norm_stats = json.load(f)
             self.policy.norm_stats_file = norm_stats_file
+            action_dim = int(getattr(self.policy, "action_dim", 0))
             action_stats = norm_stats.get("norm_stats", {}).get("action", {})
             for key in ("q01", "q99", "mean", "std", "min", "max"):
                 if key in action_stats:
-                    self.policy.action_dim = len(action_stats[key])
-                    self.policy.vla.action_dim = self.policy.action_dim
+                    action_dim = len(action_stats[key])
+                    self.policy.action_dim = action_dim
+                    self.policy.vla.action_dim = action_dim
                     break
-            self.policy.vla.normalizer = Normalizer(
-                norm_stats=norm_stats["norm_stats"],
-                from_file=True,
-                data_type=data_type,
-                norm_type={
-                    "observation.images.cam_high": "identity",
-                    "observation.images.cam_left_wrist": "identity",
-                    "observation.images.cam_right_wrist": "identity",
-                    "observation.state": getattr(self.policy.data_config, "norm_type", "bounds_99_woclip"),
-                    "action": getattr(self.policy.data_config, "norm_type", "bounds_99_woclip"),
-                },
+            self.policy.vla.normalizer = _ActionDimNormalizer(
+                Normalizer(
+                    norm_stats=norm_stats["norm_stats"],
+                    from_file=True,
+                    data_type=data_type,
+                    norm_type={
+                        "observation.images.cam_high": "identity",
+                        "observation.images.cam_left_wrist": "identity",
+                        "observation.images.cam_right_wrist": "identity",
+                        "observation.state": getattr(
+                            self.policy.data_config, "norm_type", "bounds_99_woclip"
+                        ),
+                        "action": getattr(
+                            self.policy.data_config, "norm_type", "bounds_99_woclip"
+                        ),
+                    },
+                ),
+                action_dim=action_dim,
             )
+
+        action_dim = int(getattr(self.policy, "action_dim", 0))
+        chunk_size = int(getattr(self.policy, "chunk_size", 1))
+        self.config = SimpleNamespace(
+            type="lingbot",
+            input_features={
+                "observation.images.head_cam_h": SimpleNamespace(shape=(3, 480, 848)),
+                "observation.images.wrist_cam_r": SimpleNamespace(shape=(3, 480, 848)),
+                "observation.state": SimpleNamespace(shape=(action_dim,)),
+            },
+            output_features={"action": SimpleNamespace(shape=(action_dim,))},
+            image_features={
+                "observation.images.head_cam_h": SimpleNamespace(shape=(3, 480, 848)),
+                "observation.images.wrist_cam_r": SimpleNamespace(shape=(3, 480, 848)),
+            },
+            depth_features={},
+            chunk_size=chunk_size,
+            n_action_steps=int(use_length if use_length > 0 else chunk_size),
+            reward_delta_indices=None,
+            action_delta_indices=list(range(chunk_size)),
+            observation_delta_indices=None,
+        )
 
     def eval(self):
         return self
@@ -192,7 +261,7 @@ class LingbotDeployPolicy:
                 return arr.astype(np.float32)
         raise KeyError("No state key found in observation. Tried: observation.state/state/state.state")
 
-    def select_action(self, observation: dict[str, Any]) -> torch.Tensor:
+    def _build_observation_payload(self, observation: dict[str, Any]) -> dict[str, Any]:
         def _get_first(keys: list[str]):
             for k in keys:
                 if k in observation:
@@ -219,20 +288,31 @@ class LingbotDeployPolicy:
         if right is None:
             right = left
 
-        obs_payload = {
+        return {
             "observation.images.cam_high": _to_hwc_uint8(head),
             "observation.images.cam_left_wrist": _to_hwc_uint8(left),
             "observation.images.cam_right_wrist": _to_hwc_uint8(right),
             "observation.state": self._extract_state(observation),
             "task": self.task_prompt,
         }
-        out = self.policy.infer(obs_payload)
+
+    def _infer_actions(self, observation: dict[str, Any]) -> torch.Tensor:
+        out = self.policy.infer(self._build_observation_payload(observation))
         action_key = "raw_action" if self.execute_raw_action else "action"
+        if action_key not in out:
+            raise KeyError(f"LingBot inference output does not contain {action_key!r}: {sorted(out)}")
         action_np = np.asarray(out[action_key], dtype=np.float32)
 
         if action_np.ndim == 1:
             action_np = action_np[None, :]
-
-        # Use the first action if model returns action chunk.
-        action_np = action_np[:1, :]
+        if action_np.ndim != 2:
+            raise ValueError(f"Expected LingBot actions with shape [T, D], got {action_np.shape}")
         return torch.from_numpy(action_np)
+
+    def predict_action_chunk(self, observation: dict[str, Any]) -> torch.Tensor:
+        """Return every action produced by LingBot for open-loop diagnostics."""
+        return self._infer_actions(observation)
+
+    def select_action(self, observation: dict[str, Any]) -> torch.Tensor:
+        """Return one action, preserving the existing real-robot deployment contract."""
+        return self._infer_actions(observation)[:1]

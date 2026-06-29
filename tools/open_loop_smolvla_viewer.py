@@ -1,0 +1,517 @@
+#!/usr/bin/env python
+"""Streamlit viewer for LeRobot policy open-loop action checks."""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+os.environ["HF_DATASETS_CACHE"] = os.environ.get(
+    "OPEN_LOOP_HF_DATASETS_CACHE", str(Path.cwd() / ".cache" / "huggingface" / "datasets")
+)
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+import numpy as np
+import pandas as pd
+import streamlit as st
+import torch
+from PIL import Image, ImageEnhance
+
+import lerobot_patches.custom_patches  # noqa: F401
+from kuavo_deploy.utils.policy_loader import load_policy_and_processors
+from lerobot.datasets.factory import resolve_delta_timestamps
+from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
+
+
+DEFAULT_DATASET_ROOT = "/mnt/pqssd/Real_PQ_3.0/TASK1_SZ/lerobot_trimmed"
+DEFAULT_POLICY_PATH = (
+    "/home/larry/kuavo_data_challenge/outputs/train/r1/smolvla/"
+    "run_20260625_212157_from10k_lrfix/checkpoints/040000/pretrained_model"
+)
+DEFAULT_LINGBOT_POLICY_PATH = (
+    "/mnt/pqssd/lingbot_weights/clean_meanstd_fm_L2V2_mb16_gb16_8k_20260623_175250/"
+    "checkpoints/global_step_8000/hf_ckpt"
+)
+DEFAULT_LINGBOT_ROOT = "/home/larry/lingbot-vla"
+DEFAULT_QWEN25_PATH = "/home/larry/Qwen2.5_VL"
+DEFAULT_NORM_STATS = "assets/norm_stats/lerobot_trimmed.json"
+DEFAULT_TASK = "Pick and Place the safety belt, cable and pin connector"
+
+
+def scalar_int(value) -> int:
+    if isinstance(value, torch.Tensor):
+        return int(value.item())
+    return int(value)
+
+
+def tensor_to_pil(image: torch.Tensor) -> Image.Image:
+    image = image.detach().cpu()
+    if image.ndim == 4:
+        image = image[-1]
+    if image.shape[0] in (1, 3):
+        array = image.permute(1, 2, 0).numpy()
+    else:
+        array = image.numpy()
+    if array.dtype != np.uint8:
+        array = np.clip(array, 0.0, 1.0)
+        array = (array * 255).astype(np.uint8)
+    if array.shape[-1] == 1:
+        array = array[..., 0]
+    return Image.fromarray(array)
+
+
+def pil_to_tensor(image: Image.Image, like: torch.Tensor, force_depth: bool = False) -> torch.Tensor:
+    channels = 1 if force_depth or is_depth_tensor(like) else (like.shape[-3] if like.ndim >= 3 else 1)
+    if channels == 1:
+        array = np.asarray(image.convert("L"), dtype=np.float32) / 255.0
+        tensor = torch.from_numpy(array).unsqueeze(0)
+    else:
+        array = np.asarray(image.convert("RGB"), dtype=np.float32) / 255.0
+        tensor = torch.from_numpy(array).permute(2, 0, 1)
+    return tensor.to(dtype=like.dtype)
+
+
+def is_depth_key(key: str) -> bool:
+    return key.startswith("observation.depth")
+
+
+def get_depth_keys(policy) -> set[str]:
+    depth_keys = set(getattr(policy.config, "depth_features", {}) or {})
+    for key, feature in getattr(policy.config, "input_features", {}).items():
+        feature_type = str(getattr(feature, "type", "")).upper()
+        if "DEPTH" in feature_type:
+            depth_keys.add(key)
+    return depth_keys
+
+
+def is_depth_tensor(tensor: torch.Tensor) -> bool:
+    if tensor.ndim < 3:
+        return True
+    if tensor.shape[-3] == 1:
+        return True
+    return False
+
+
+def normalize_depth_tensor(depth: torch.Tensor) -> torch.Tensor:
+    """Convert depth observations to [..., 1, H, W] before policy preprocessing."""
+    if depth.ndim == 2:
+        return depth.unsqueeze(0)
+    if depth.ndim == 3:
+        if depth.shape[0] in (1, 3):
+            chw = depth
+        elif depth.shape[-1] in (1, 3):
+            chw = depth.permute(2, 0, 1)
+        else:
+            return depth.unsqueeze(0)
+        return chw.mean(dim=0, keepdim=True) if chw.shape[0] != 1 else chw
+    if depth.ndim == 4:
+        if depth.shape[1] in (1, 3):
+            tchw = depth
+        elif depth.shape[-1] in (1, 3):
+            tchw = depth.permute(0, 3, 1, 2)
+        else:
+            return depth
+        return tchw.mean(dim=1, keepdim=True) if tchw.shape[1] != 1 else tchw
+    return depth
+
+
+def crop_pil(image: Image.Image, crop_mode: str, center_ratio: float, manual_box: tuple[float, float, float, float]) -> Image.Image:
+    width, height = image.size
+    if crop_mode == "Manual":
+        left_r, top_r, right_r, bottom_r = manual_box
+        left = int(width * left_r)
+        top = int(height * top_r)
+        right = int(width * right_r)
+        bottom = int(height * bottom_r)
+        if right <= left or bottom <= top:
+            return image
+    elif center_ratio < 1.0:
+        new_w = max(1, int(width * center_ratio))
+        new_h = max(1, int(height * center_ratio))
+        left = (width - new_w) // 2
+        top = (height - new_h) // 2
+        right = left + new_w
+        bottom = top + new_h
+    else:
+        return image
+    return image.crop((left, top, right, bottom)).resize((width, height), Image.BILINEAR)
+
+
+def augment_single_visual(
+    image: torch.Tensor,
+    brightness: float,
+    contrast: float,
+    color: float,
+    crop_mode: str,
+    center_ratio: float,
+    manual_box: tuple[float, float, float, float],
+    force_depth: bool = False,
+) -> torch.Tensor:
+    pil = tensor_to_pil(image)
+    pil = crop_pil(pil, crop_mode, center_ratio, manual_box)
+    pil = ImageEnhance.Brightness(pil).enhance(brightness)
+    pil = ImageEnhance.Contrast(pil).enhance(contrast)
+    if not force_depth and image.shape[-3] != 1:
+        pil = ImageEnhance.Color(pil).enhance(color)
+    return pil_to_tensor(pil, image, force_depth=force_depth)
+
+
+def augment_visual(
+    image: torch.Tensor,
+    brightness: float,
+    contrast: float,
+    color: float,
+    crop_mode: str,
+    center_ratio: float,
+    manual_box: tuple[float, float, float, float],
+    force_depth: bool = False,
+) -> torch.Tensor:
+    if image.ndim == 4:
+        frames = [
+            augment_single_visual(
+                frame, brightness, contrast, color, crop_mode, center_ratio, manual_box, force_depth
+            )
+            for frame in image
+        ]
+        return torch.stack(frames, dim=0)
+    return augment_single_visual(image, brightness, contrast, color, crop_mode, center_ratio, manual_box, force_depth)
+
+
+def is_visual_key(key: str) -> bool:
+    return key.startswith("observation.images.") or key.startswith("observation.depth")
+
+
+def missing_required_keys(policy, sample: dict) -> list[str]:
+    required = set(policy.config.input_features)
+    required.update(getattr(policy.config, "image_features", {}) or {})
+    required.update(getattr(policy.config, "depth_features", {}) or {})
+    return sorted(key for key in required if key not in sample)
+
+
+def prepare_depth_batch(policy, batch: dict) -> None:
+    """Force legacy Kuavo depth policies to receive observation.depth as 1-channel tensors."""
+    depth_keys = [key for key in get_depth_keys(policy) if key in batch and isinstance(batch[key], torch.Tensor)]
+    for key in depth_keys:
+        batch[key] = normalize_depth_tensor(batch[key])
+    if depth_keys:
+        batch["observation.depth"] = [batch[key] for key in depth_keys]
+
+
+def ensure_bchw(tensor: torch.Tensor) -> torch.Tensor:
+    if tensor.ndim == 3:
+        return tensor.unsqueeze(0)
+    if tensor.ndim == 5 and tensor.shape[1] == 1:
+        return tensor[:, 0]
+    return tensor
+
+
+def predict_act_direct(policy, batch: dict) -> torch.Tensor:
+    """Bypass legacy ACT wrapper depth reshaping and feed the model exactly what it expects."""
+    model_batch = dict(batch)
+    image_keys = list(getattr(policy.config, "image_features", {}) or {})
+    depth_keys = [key for key in get_depth_keys(policy) if key in model_batch]
+
+    if image_keys:
+        model_batch["observation.images"] = [ensure_bchw(model_batch[key]) for key in image_keys]
+    if depth_keys:
+        model_batch["observation.depth"] = [
+            ensure_bchw(normalize_depth_tensor(model_batch[key])) for key in depth_keys
+        ]
+
+    return policy.model(model_batch)[0]
+
+
+def normalize_pred_actions(action: torch.Tensor) -> torch.Tensor:
+    action = action.detach().cpu().float()
+    if action.ndim == 1:
+        return action.unsqueeze(0)
+    if action.ndim == 2:
+        return action
+    if action.ndim == 3 and action.shape[0] == 1:
+        return action.squeeze(0)
+    if action.ndim == 3 and action.shape[1] == 1:
+        return action.squeeze(1)
+    return action.reshape(-1, action.shape[-1])
+
+
+def normalize_gt_actions(action: torch.Tensor, action_dim: int) -> torch.Tensor:
+    action = action.detach().cpu().float()
+    if action.ndim == 1:
+        return action.unsqueeze(0)
+    if action.shape[-1] == action_dim:
+        return action.reshape(-1, action_dim)
+    if action.shape[0] == action_dim:
+        return action.transpose(0, 1).reshape(-1, action_dim)
+    return action.reshape(action.shape[0], -1)
+
+
+@st.cache_resource(show_spinner="Loading policy checkpoint...")
+def load_model(
+    policy_path: str,
+    policy_type: str,
+    device_name: str,
+    lingbot_root: str,
+    qwen25_path: str,
+    norm_stats_file: str,
+    task: str,
+):
+    device = torch.device(device_name if torch.cuda.is_available() or not device_name.startswith("cuda") else "cpu")
+    policy_kwargs = None
+    if policy_type == "lingbot":
+        policy_kwargs = {
+            "lingbot_root": lingbot_root,
+            "qwen25_path": qwen25_path,
+            "task_prompt": task,
+            "use_length": 50,
+            "chunk_ret": True,
+            "norm_stats_file": norm_stats_file,
+            "data_type": "customized",
+            "execute_raw_action": False,
+        }
+    return load_policy_and_processors(
+        Path(policy_path), policy_type, device, policy_kwargs=policy_kwargs
+    )
+
+
+@st.cache_resource(show_spinner="Loading LeRobot dataset...")
+def load_dataset(
+    repo_id: str,
+    dataset_root: str,
+    policy_path: str,
+    policy_type: str,
+    device_name: str,
+    episodes: tuple[int, ...],
+    lingbot_root: str,
+    qwen25_path: str,
+    norm_stats_file: str,
+    task: str,
+    video_backend: str,
+):
+    policy, _, _ = load_model(
+        policy_path,
+        policy_type,
+        device_name,
+        lingbot_root,
+        qwen25_path,
+        norm_stats_file,
+        task,
+    )
+    ds_meta = LeRobotDatasetMetadata(repo_id, root=Path(dataset_root))
+    delta_timestamps = resolve_delta_timestamps(policy.config, ds_meta)
+    dataset = LeRobotDataset(
+        repo_id,
+        root=Path(dataset_root),
+        episodes=list(episodes),
+        delta_timestamps=delta_timestamps,
+        video_backend=video_backend or None,
+    )
+    return dataset
+
+
+def predict_actions(policy, preprocessor, postprocessor, sample: dict, task: str, mode: str, policy_type: str) -> torch.Tensor:
+    observation = {key: sample[key] for key in policy.config.input_features if key in sample}
+    if "smolvla" in str(getattr(policy.config, "type", "")):
+        observation["task"] = sample.get("task") or task
+    batch = preprocessor(observation)
+    for key in list(batch):
+        if is_depth_key(key) and isinstance(batch[key], torch.Tensor):
+            batch[key] = normalize_depth_tensor(batch[key])
+    prepare_depth_batch(policy, batch)
+    with torch.inference_mode():
+        policy.reset()
+        if mode == "chunk" and policy_type == "diffusion":
+            first_action = policy.select_action(batch)
+            queued_actions = list(getattr(policy, "_queues", {}).get("action", []))
+            action = torch.stack([first_action, *queued_actions], dim=1)
+        elif policy_type == "act" and mode == "chunk":
+            action = predict_act_direct(policy, batch)
+        elif mode == "chunk" and hasattr(policy, "predict_action_chunk"):
+            action = policy.predict_action_chunk(batch)
+        else:
+            action = policy.select_action(batch)
+        action = postprocessor(action)
+    return normalize_pred_actions(action)
+
+
+def main() -> None:
+    st.set_page_config(page_title="LeRobot Open-loop", layout="wide")
+    st.title("LeRobot Open-loop")
+
+    with st.sidebar:
+        dataset_root = st.text_input("Dataset root", DEFAULT_DATASET_ROOT)
+        repo_id = st.text_input("Repo ID", "kuavo/task1_sz")
+        policy_type = st.selectbox("Policy type", ["smolvla", "act", "diffusion", "lingbot"], index=0)
+        default_policy_path = DEFAULT_LINGBOT_POLICY_PATH if policy_type == "lingbot" else DEFAULT_POLICY_PATH
+        policy_path = st.text_input(
+            "Policy path", default_policy_path, key=f"policy_path_{policy_type}"
+        )
+        task = st.text_area("Task", DEFAULT_TASK)
+        device_options = ["cuda"] if policy_type == "lingbot" else ["cuda", "cpu"]
+        device = st.selectbox("Device", device_options, index=0)
+        video_backend = st.selectbox("Video backend", ["pyav", "torchcodec"], index=0)
+        if policy_type == "lingbot":
+            lingbot_root = st.text_input("LingBot root", DEFAULT_LINGBOT_ROOT)
+            qwen25_path = st.text_input("Qwen2.5 processor path", DEFAULT_QWEN25_PATH)
+            norm_stats_file = st.text_input("Norm stats file", DEFAULT_NORM_STATS)
+        else:
+            lingbot_root = ""
+            qwen25_path = ""
+            norm_stats_file = ""
+        episode = st.number_input("Episode", min_value=0, value=0, step=1)
+        predict_mode = st.selectbox("Predict mode", ["chunk", "single"], index=0)
+        if policy_type == "diffusion" and predict_mode == "chunk":
+            st.caption("Diffusion chunk mode is shown through select_action to populate observation queues safely.")
+        st.divider()
+        brightness = st.slider("Brightness", 0.4, 1.8, 1.0, 0.05)
+        contrast = st.slider("Contrast", 0.4, 1.8, 1.0, 0.05)
+        color = st.slider("Color", 0.0, 1.8, 1.0, 0.05)
+        crop_mode = st.radio("Crop mode", ["Center", "Manual"], horizontal=True)
+        center_crop = st.slider("Center crop ratio", 0.5, 1.0, 1.0, 0.01, disabled=crop_mode != "Center")
+        left_crop = st.slider("Manual left", 0.0, 0.95, 0.0, 0.01, disabled=crop_mode != "Manual")
+        top_crop = st.slider("Manual top", 0.0, 0.95, 0.0, 0.01, disabled=crop_mode != "Manual")
+        right_crop = st.slider("Manual right", 0.05, 1.0, 1.0, 0.01, disabled=crop_mode != "Manual")
+        bottom_crop = st.slider("Manual bottom", 0.05, 1.0, 1.0, 0.01, disabled=crop_mode != "Manual")
+        if st.button("Load / run inference", type="primary"):
+            st.session_state["open_loop_enabled"] = True
+
+    if not st.session_state.get("open_loop_enabled", False):
+        st.info("Configure the policy and dataset in the sidebar, then load the model.")
+        st.stop()
+
+    policy, preprocessor, postprocessor = load_model(
+        policy_path,
+        policy_type,
+        device,
+        lingbot_root,
+        qwen25_path,
+        norm_stats_file,
+        task,
+    )
+    dataset = load_dataset(
+        repo_id,
+        dataset_root,
+        policy_path,
+        policy_type,
+        device,
+        (int(episode),),
+        lingbot_root,
+        qwen25_path,
+        norm_stats_file,
+        task,
+        video_backend,
+    )
+    max_frame = max(0, len(dataset) - 1)
+    with st.sidebar:
+        frame = st.slider("Frame in selected episode", min_value=0, max_value=max_frame, value=0, step=1)
+        max_compare_h = int(getattr(policy.config, "chunk_size", getattr(policy.config, "horizon", 1)))
+        horizon = st.slider("Compare horizon", min_value=1, max_value=max(1, max_compare_h), value=max(1, max_compare_h))
+
+    idx = min(int(frame), len(dataset) - 1)
+    sample = dataset[idx]
+    missing_keys = missing_required_keys(policy, sample)
+    if missing_keys:
+        st.error(
+            "The selected policy expects observation keys that are not present in this dataset sample. "
+            "Use the matching LeRobot dataset/checkpoint pair, or pick a policy trained without these modalities."
+        )
+        st.code("\n".join(missing_keys))
+        st.stop()
+
+    depth_keys = get_depth_keys(policy)
+    image_keys = [key for key in policy.config.input_features if is_visual_key(key) or key in depth_keys]
+    preview_sample = dict(sample)
+    manual_box = (left_crop, top_crop, right_crop, bottom_crop)
+    for key in image_keys:
+        preview_sample[key] = augment_visual(
+            sample[key],
+            brightness,
+            contrast,
+            color,
+            crop_mode,
+            center_crop,
+            manual_box,
+            force_depth=is_depth_key(key) or key in depth_keys,
+        )
+        if is_depth_key(key) or key in depth_keys:
+            preview_sample[key] = normalize_depth_tensor(preview_sample[key])
+
+    pred = predict_actions(policy, preprocessor, postprocessor, preview_sample, task, predict_mode, policy_type)
+    gt = normalize_gt_actions(sample["action"], pred.shape[-1])
+    if pred.shape[-1] != gt.shape[-1]:
+        st.error("Predicted action dimension does not match dataset action dimension.")
+        st.write({"pred_shape": list(pred.shape), "gt_shape": list(gt.shape)})
+        st.stop()
+    compare_h = min(int(horizon), pred.shape[0], gt.shape[0])
+    err = pred[:compare_h] - gt[:compare_h]
+    horizon_mae = err.abs().mean(dim=1).numpy()
+    dim_mae = err.abs().mean(dim=0).numpy()
+
+    progress = 0.0 if max_frame == 0 else idx / max_frame
+    st.progress(progress, text=f"Episode {scalar_int(sample['episode_index'])}, frame {idx}/{max_frame}")
+
+    meta_cols = st.columns(6)
+    meta_cols[0].metric("Episode", scalar_int(sample["episode_index"]))
+    meta_cols[1].metric("Frame", scalar_int(sample["frame_index"]))
+    meta_cols[2].metric("Policy", policy_type)
+    meta_cols[3].metric("Chunk", getattr(policy.config, "chunk_size", getattr(policy.config, "horizon", pred.shape[0])))
+    meta_cols[4].metric("n_action_steps", getattr(policy.config, "n_action_steps", pred.shape[0]))
+    meta_cols[5].metric("First MAE", f"{horizon_mae[0]:.6f}")
+
+    if image_keys:
+        cols = st.columns(len(image_keys))
+        for col, key in zip(cols, image_keys, strict=False):
+            col.image(tensor_to_pil(preview_sample[key]), caption=key, width="stretch")
+
+    first = pd.DataFrame(
+        {
+            "dim": list(range(pred.shape[-1])),
+            "pred": pred[0].numpy(),
+            "gt": gt[0].numpy(),
+            "err": (pred[0] - gt[0]).numpy(),
+            "abs_err": (pred[0] - gt[0]).abs().numpy(),
+        }
+    )
+    st.subheader("First Action")
+    st.dataframe(first, width="stretch", hide_index=True)
+
+    chart_cols = st.columns(2)
+    with chart_cols[0]:
+        st.subheader("Horizon MAE")
+        st.line_chart(pd.DataFrame({"mae": horizon_mae}))
+    with chart_cols[1]:
+        st.subheader("Dimension MAE")
+        st.bar_chart(pd.DataFrame({"mae": dim_mae}))
+
+    st.subheader("Pred vs GT by Action Dimension")
+    dim = st.selectbox("Action dimension", list(range(pred.shape[-1])), index=0)
+    dim_df = pd.DataFrame(
+        {
+            "horizon": np.arange(compare_h),
+            "pred": pred[:compare_h, dim].numpy(),
+            "gt": gt[:compare_h, dim].numpy(),
+            "error": (pred[:compare_h, dim] - gt[:compare_h, dim]).numpy(),
+        }
+    ).set_index("horizon")
+    line_cols = st.columns(2)
+    line_cols[0].line_chart(dim_df[["pred", "gt"]])
+    line_cols[1].line_chart(dim_df[["error"]])
+
+    with st.expander("State / Chunk Table", expanded=False):
+        state = sample.get("observation.state")
+        if isinstance(state, torch.Tensor):
+            st.write({"observation.state": state.detach().cpu().float().tolist()})
+        chunk_df = pd.DataFrame(
+            {
+                "horizon": np.arange(compare_h),
+                **{f"pred_{i}": pred[:compare_h, i].numpy() for i in range(pred.shape[-1])},
+                **{f"gt_{i}": gt[:compare_h, i].numpy() for i in range(gt.shape[-1])},
+            }
+        )
+        st.dataframe(chunk_df, width="stretch", hide_index=True)
+
+
+if __name__ == "__main__":
+    main()

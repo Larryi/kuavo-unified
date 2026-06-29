@@ -88,12 +88,32 @@ def patch_lingbot_model_loader() -> None:
     pair we need, so bind it explicitly.
     """
 
+    from abc import update_abstractmethods
+
     from lerobot.policies.pi0.configuration_pi0 import PI0Config
     import lingbotvla.models.auto as auto_mod
     import lingbotvla.models.loader as loader_mod
     from lingbotvla.models.loader import CustomizedModelingLoader
     from lingbotvla.models.vla.pi0.modeling_lingbot_vla import LingbotVlaPolicy
     from lingbotvla.models.vla.pi0.modeling_pi0 import PI0Policy
+
+    def predict_action_chunk(self, batch, **_kwargs):
+        return self.select_action(batch)
+
+    def refresh_abstract_subclasses(policy_cls):
+        for subclass in policy_cls.__subclasses__():
+            update_abstractmethods(subclass)
+            refresh_abstract_subclasses(subclass)
+
+    # LeRobot 0.4.2 added predict_action_chunk to the PreTrainedPolicy ABC,
+    # while the current LingBot source predates that interface. The inference
+    # subclasses provide select_action through PolicyPreprocessMixin, so this
+    # compatibility method safely delegates to the concrete implementation.
+    for policy_cls in (LingbotVlaPolicy, PI0Policy):
+        if "predict_action_chunk" in getattr(policy_cls, "__abstractmethods__", ()):
+            policy_cls.predict_action_chunk = predict_action_chunk
+            update_abstractmethods(policy_cls)
+        refresh_abstract_subclasses(policy_cls)
 
     if getattr(loader_mod.get_loader, "_kuavo_patched", False):
         return
