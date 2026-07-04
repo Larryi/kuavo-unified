@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from pathlib import Path
 
 os.environ["HF_DATASETS_CACHE"] = os.environ.get(
@@ -336,6 +337,134 @@ def predict_actions(policy, preprocessor, postprocessor, sample: dict, task: str
     return normalize_pred_actions(action)
 
 
+def build_episode_timeline(
+    dataset,
+    policy,
+    preprocessor,
+    postprocessor,
+    task: str,
+    policy_type: str,
+    frame_limit: int,
+    inference_stride: int,
+    aggregation: str,
+    augment_kwargs: dict,
+) -> dict:
+    """Run independent chunk predictions over ground-truth episode observations."""
+    frame_count = min(frame_limit, len(dataset))
+    if frame_count <= 0:
+        raise ValueError("The selected episode contains no frames.")
+
+    first_sample = dataset[0]
+    first_gt = normalize_gt_actions(first_sample["action"], first_sample["action"].shape[-1])
+    action_dim = first_gt.shape[-1]
+    gt = np.full((frame_count, action_dim), np.nan, dtype=np.float32)
+    pred_sum = np.zeros((frame_count, action_dim), dtype=np.float64)
+    pred_count = np.zeros(frame_count, dtype=np.int32)
+    inference_frames: list[int] = []
+    inference_ms: list[float] = []
+    depth_keys = get_depth_keys(policy)
+    visual_keys = [
+        key for key in policy.config.input_features if is_visual_key(key) or key in depth_keys
+    ]
+
+    for frame in range(frame_count):
+        gt[frame] = normalize_gt_actions(dataset[frame]["action"], action_dim)[0].numpy()
+
+    for frame in range(0, frame_count, inference_stride):
+        sample = dict(dataset[frame])
+        for key in visual_keys:
+            if key not in sample:
+                continue
+            sample[key] = augment_visual(
+                sample[key],
+                force_depth=is_depth_key(key) or key in depth_keys,
+                **augment_kwargs,
+            )
+            if is_depth_key(key) or key in depth_keys:
+                sample[key] = normalize_depth_tensor(sample[key])
+
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        started = time.perf_counter()
+        chunk = predict_actions(
+            policy, preprocessor, postprocessor, sample, task, "chunk", policy_type
+        )
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        inference_ms.append((time.perf_counter() - started) * 1000.0)
+        inference_frames.append(frame)
+
+        if chunk.shape[-1] != action_dim:
+            raise ValueError(
+                f"Predicted action dimension {chunk.shape[-1]} does not match GT {action_dim}."
+            )
+        usable = min(chunk.shape[0], frame_count - frame)
+        if aggregation == "Execute prefix":
+            usable = min(usable, inference_stride)
+        pred_sum[frame : frame + usable] += chunk[:usable].numpy()
+        pred_count[frame : frame + usable] += 1
+
+    pred = np.full((frame_count, action_dim), np.nan, dtype=np.float32)
+    covered = pred_count > 0
+    pred[covered] = (pred_sum[covered] / pred_count[covered, None]).astype(np.float32)
+    return {
+        "gt": gt,
+        "pred": pred,
+        "error": pred - gt,
+        "covered": covered,
+        "inference_frames": np.asarray(inference_frames),
+        "inference_ms": np.asarray(inference_ms),
+    }
+
+
+def render_episode_timeline(result: dict) -> None:
+    import altair as alt
+
+    alt.data_transformers.disable_max_rows()
+    action_dim = result["gt"].shape[-1]
+    dim = st.selectbox("Timeline action dimension", list(range(action_dim)), index=0)
+    frames = np.arange(result["gt"].shape[0])
+    values = pd.DataFrame(
+        {
+            "frame": np.concatenate([frames, frames]),
+            "series": ["GT"] * len(frames) + ["Pred"] * len(frames),
+            "value": np.concatenate([result["gt"][:, dim], result["pred"][:, dim]]),
+        }
+    )
+    lines = (
+        alt.Chart(values)
+        .mark_line()
+        .encode(
+            x=alt.X("frame:Q", title="Episode frame"),
+            y=alt.Y("value:Q", title=f"Action dimension {dim}"),
+            color=alt.Color(
+                "series:N",
+                scale=alt.Scale(domain=["GT", "Pred"], range=["#6b7280", "#16a34a"]),
+            ),
+            tooltip=["frame:Q", "series:N", alt.Tooltip("value:Q", format=".5f")],
+        )
+    )
+    rules = (
+        alt.Chart(pd.DataFrame({"frame": result["inference_frames"]}))
+        .mark_rule(color="#dc2626", opacity=0.18)
+        .encode(x="frame:Q")
+    )
+    st.altair_chart((lines + rules).properties(height=360), width="stretch")
+    st.line_chart(
+        pd.DataFrame({"frame": frames, "error": result["error"][:, dim]}).set_index("frame"),
+        height=220,
+    )
+
+    valid_error = result["error"][result["covered"]]
+    latency = result["inference_ms"]
+    cols = st.columns(5)
+    cols[0].metric("Covered", f"{result['covered'].mean() * 100:.1f}%")
+    cols[1].metric("Timeline MAE", f"{np.nanmean(np.abs(valid_error)):.6f}")
+    cols[2].metric("Timeline RMSE", f"{np.sqrt(np.nanmean(valid_error ** 2)):.6f}")
+    cols[3].metric("Mean inference", f"{latency.mean():.1f} ms")
+    cols[4].metric("P95 inference", f"{np.percentile(latency, 95):.1f} ms")
+
+
 def main() -> None:
     st.set_page_config(page_title="LeRobot Open-loop", layout="wide")
     st.title("LeRobot Open-loop")
@@ -408,6 +537,19 @@ def main() -> None:
         frame = st.slider("Frame in selected episode", min_value=0, max_value=max_frame, value=0, step=1)
         max_compare_h = int(getattr(policy.config, "chunk_size", getattr(policy.config, "horizon", 1)))
         horizon = st.slider("Compare horizon", min_value=1, max_value=max(1, max_compare_h), value=max(1, max_compare_h))
+        st.divider()
+        timeline_frames = st.number_input(
+            "Timeline frames",
+            min_value=1,
+            max_value=max(1, len(dataset)),
+            value=min(200, max(1, len(dataset))),
+        )
+        inference_stride = st.number_input(
+            "Chunk inference stride", min_value=1, max_value=max(1, max_compare_h), value=1
+        )
+        timeline_aggregation = st.selectbox(
+            "Chunk timeline mode", ["Execute prefix", "Overlap mean"], index=0
+        )
 
     idx = min(int(frame), len(dataset) - 1)
     sample = dataset[idx]
@@ -498,6 +640,35 @@ def main() -> None:
     line_cols = st.columns(2)
     line_cols[0].line_chart(dim_df[["pred", "gt"]])
     line_cols[1].line_chart(dim_df[["error"]])
+
+    st.subheader("Episode Chunk Timeline")
+    st.caption(
+        "GT and Pred are action values. Red vertical rules mark model inference frames; "
+        "the lower chart is signed prediction error."
+    )
+    if st.button("Run episode timeline", type="primary"):
+        with st.spinner("Running chunk inference over the selected episode..."):
+            st.session_state["episode_timeline"] = build_episode_timeline(
+                dataset=dataset,
+                policy=policy,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+                task=task,
+                policy_type=policy_type,
+                frame_limit=int(timeline_frames),
+                inference_stride=int(inference_stride),
+                aggregation=timeline_aggregation,
+                augment_kwargs={
+                    "brightness": brightness,
+                    "contrast": contrast,
+                    "color": color,
+                    "crop_mode": crop_mode,
+                    "center_ratio": center_crop,
+                    "manual_box": manual_box,
+                },
+            )
+    if "episode_timeline" in st.session_state:
+        render_episode_timeline(st.session_state["episode_timeline"])
 
     with st.expander("State / Chunk Table", expanded=False):
         state = sample.get("observation.state")
