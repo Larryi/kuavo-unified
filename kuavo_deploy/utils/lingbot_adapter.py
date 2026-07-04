@@ -5,7 +5,7 @@ import sys
 import json
 import yaml
 from pathlib import Path
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -117,13 +117,51 @@ class _ActionDimNormalizer:
 
     def unnormalize(self, data):
         action = data.get("action")
-        if action is not None and action.shape[-1] != self.action_dim:
+        if action is not None and action.shape[-1] < self.action_dim:
+            raise ValueError(
+                f"LingBot predicted {action.shape[-1]} action dimensions, but the configured "
+                f"normalization statistics require {self.action_dim}."
+            )
+        if action is not None and action.shape[-1] > self.action_dim:
             data = dict(data)
             data["action"] = action[..., : self.action_dim]
         return self.normalizer.unnormalize(data)
 
     def __getattr__(self, name):
         return getattr(self.normalizer, name)
+
+
+def _install_dynamic_action_selector(policy) -> None:
+    """Replace upstream's hardcoded 14-D inference crop with checkpoint action_dim."""
+
+    @torch.no_grad()
+    def select_action(self, observation, use_bf16=False, vlm_causal=False, noise=None):
+        self.eval()
+        dtype = torch.bfloat16 if use_bf16 else torch.float32
+        if len(observation["images"].shape) == 4:
+            observation["images"] = observation["images"].unsqueeze(0)
+            observation["img_masks"] = observation["img_masks"].unsqueeze(0)
+
+        sample_kwargs = {
+            "vlm_causal": vlm_causal,
+        }
+        if "expert_imgs" in observation:
+            sample_kwargs["expert_imgs"] = observation["expert_imgs"].to(dtype=dtype, device="cuda")
+        actions = self.model.sample_actions(
+            observation["images"].to(dtype=dtype, device="cuda"),
+            observation["img_masks"].to(device="cuda"),
+            observation["lang_tokens"].unsqueeze(0).to(device="cuda"),
+            observation["lang_masks"].unsqueeze(0).to(device="cuda"),
+            observation["state"].unsqueeze(0).to(dtype=dtype, device="cuda"),
+            **sample_kwargs,
+        )
+        action_dim = int(getattr(self, "action_dim", actions.shape[-1]))
+        observation["action"] = actions.squeeze(0)[..., :action_dim].float().cpu()
+        if use_bf16:
+            observation["state"] = observation["state"].float()
+        return self.normalizer.unnormalize(observation)
+
+    policy.select_action = MethodType(select_action, policy)
 
 
 class LingbotDeployPolicy:
@@ -166,12 +204,19 @@ class LingbotDeployPolicy:
         # so inject the configured type before model construction rather than
         # waiting for the post-load normalizer override below.
         upstream_normalizer = lingbot_policy_module.Normalizer
+        upstream_normalizer_init = upstream_normalizer.__init__
 
-        def make_normalizer(*args, **kwargs):
-            kwargs["data_type"] = data_type
-            return upstream_normalizer(*args, **kwargs)
+        def compatible_normalizer_init(instance, *args, **kwargs):
+            norm_stats = kwargs.get("norm_stats", args[0] if args else {})
+            # Kuavo LeRobot stats are already flattened. Upstream LingBot
+            # otherwise forces RobotWin's split arm/effector schema here.
+            if "observation.state" in norm_stats and "action" in norm_stats:
+                kwargs["data_type"] = "customized"
+            else:
+                kwargs["data_type"] = data_type
+            upstream_normalizer_init(instance, *args, **kwargs)
 
-        lingbot_policy_module.Normalizer = make_normalizer
+        upstream_normalizer.__init__ = compatible_normalizer_init
         try:
             self.policy = lingbot_policy_module.QwenPiServer(
                 path_to_pi_model=self.model_path,
@@ -181,7 +226,9 @@ class LingbotDeployPolicy:
                 use_fp32=False,
             )
         finally:
-            lingbot_policy_module.Normalizer = upstream_normalizer
+            upstream_normalizer.__init__ = upstream_normalizer_init
+
+        _install_dynamic_action_selector(self.policy.vla)
 
         if norm_stats_file:
             with open(norm_stats_file, "r", encoding="utf-8") as f:
