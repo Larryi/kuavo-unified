@@ -6,6 +6,27 @@ from typing import TypedDict
 import torch
 
 
+def _patch_legacy_flash_attention_arg(model_cls) -> None:
+    """Translate LingBot's legacy `_from_config` flag for new Transformers."""
+
+    marker = "_kuavo_legacy_flash_arg_patched"
+    # Check the concrete class, not an inherited attribute. LingBot defines
+    # several Qwen subclasses and their import order must not affect patching.
+    if model_cls.__dict__.get(marker, False):
+        return
+
+    original_from_config = model_cls._from_config
+
+    def compatible_from_config(cls, config, **kwargs):
+        use_flash_attention_2 = kwargs.pop("use_flash_attention_2", False)
+        if use_flash_attention_2:
+            config._attn_implementation = "flash_attention_2"
+        return original_from_config(config, **kwargs)
+
+    model_cls._from_config = classmethod(compatible_from_config)
+    setattr(model_cls, marker, True)
+
+
 def patch_transformers_for_lingbot() -> None:
     """Patch `transformers` APIs removed or relocated in newer releases.
 
@@ -21,6 +42,9 @@ def patch_transformers_for_lingbot() -> None:
     import types
     import transformers.modeling_flash_attention_utils as flash_utils
     import transformers.utils as transformers_utils
+    from transformers import Qwen2_5_VLForConditionalGeneration
+
+    _patch_legacy_flash_attention_arg(Qwen2_5_VLForConditionalGeneration)
     if not hasattr(flash_utils, "apply_rotary_emb"):
         from flash_attn.layers.rotary import apply_rotary_emb as flash_apply_rotary_emb
 
@@ -94,8 +118,20 @@ def patch_lingbot_model_loader() -> None:
     import lingbotvla.models.auto as auto_mod
     import lingbotvla.models.loader as loader_mod
     from lingbotvla.models.loader import CustomizedModelingLoader
-    from lingbotvla.models.vla.pi0.modeling_lingbot_vla import LingbotVlaPolicy
+    from lingbotvla.models.vla.pi0.modeling_lingbot_vla import (
+        LingbotVlaPolicy,
+        Qwen2ForCausalLM as LingbotQwen2ForCausalLM,
+        Qwen2_5_VLForConditionalGeneration as LingbotQwen2_5_VLForConditionalGeneration,
+    )
     from lingbotvla.models.vla.pi0.modeling_pi0 import PI0Policy
+    from lingbotvla.models.vla.pi0.qwenvl_in_vla import Qwen2_5_VisionTransformerPretrainedModel
+
+    for model_cls in (
+        LingbotQwen2_5_VLForConditionalGeneration,
+        LingbotQwen2ForCausalLM,
+        Qwen2_5_VisionTransformerPretrainedModel,
+    ):
+        _patch_legacy_flash_attention_arg(model_cls)
 
     def predict_action_chunk(self, batch, **_kwargs):
         return self.select_action(batch)
