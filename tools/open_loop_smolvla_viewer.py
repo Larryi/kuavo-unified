@@ -7,6 +7,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from types import MethodType
 
 os.environ["HF_DATASETS_CACHE"] = os.environ.get(
     "OPEN_LOOP_HF_DATASETS_CACHE", str(Path.cwd() / ".cache" / "huggingface" / "datasets")
@@ -40,6 +41,20 @@ DEFAULT_LINGBOT_ROOT = "/home/larry/lingbot-vla"
 DEFAULT_QWEN25_PATH = "/home/larry/Qwen2.5_VL"
 DEFAULT_NORM_STATS = "assets/norm_stats/lerobot_trimmed.json"
 DEFAULT_TASK = "Pick and Place the safety belt, cable and pin connector"
+
+
+def fix_episode_subset_delta_indices(dataset) -> None:
+    """Use absolute frame indices when querying chunks from an episode subset."""
+
+    if getattr(dataset, "_absolute_to_relative_idx", None) is None:
+        return
+    relative_to_absolute = [scalar_int(index) for index in dataset.hf_dataset["index"]]
+    original_get_query_indices = dataset._get_query_indices
+
+    def get_query_indices(_self, relative_idx: int, episode_idx: int):
+        return original_get_query_indices(relative_to_absolute[relative_idx], episode_idx)
+
+    dataset._get_query_indices = MethodType(get_query_indices, dataset)
 
 
 def scalar_int(value) -> int:
@@ -309,6 +324,7 @@ def load_dataset(
         delta_timestamps=delta_timestamps,
         video_backend=video_backend or None,
     )
+    fix_episode_subset_delta_indices(dataset)
     return dataset
 
 
@@ -646,29 +662,34 @@ def main() -> None:
         "GT and Pred are action values. Red vertical rules mark model inference frames; "
         "the lower chart is signed prediction error."
     )
+    timeline_key = (dataset_root, int(episode), policy_path, int(timeline_frames), int(inference_stride))
     if st.button("Run episode timeline", type="primary"):
         with st.spinner("Running chunk inference over the selected episode..."):
-            st.session_state["episode_timeline"] = build_episode_timeline(
-                dataset=dataset,
-                policy=policy,
-                preprocessor=preprocessor,
-                postprocessor=postprocessor,
-                task=task,
-                policy_type=policy_type,
-                frame_limit=int(timeline_frames),
-                inference_stride=int(inference_stride),
-                aggregation=timeline_aggregation,
-                augment_kwargs={
-                    "brightness": brightness,
-                    "contrast": contrast,
-                    "color": color,
-                    "crop_mode": crop_mode,
-                    "center_ratio": center_crop,
-                    "manual_box": manual_box,
-                },
-            )
-    if "episode_timeline" in st.session_state:
-        render_episode_timeline(st.session_state["episode_timeline"])
+            st.session_state["episode_timeline"] = {
+                "key": timeline_key,
+                "result": build_episode_timeline(
+                    dataset=dataset,
+                    policy=policy,
+                    preprocessor=preprocessor,
+                    postprocessor=postprocessor,
+                    task=task,
+                    policy_type=policy_type,
+                    frame_limit=int(timeline_frames),
+                    inference_stride=int(inference_stride),
+                    aggregation=timeline_aggregation,
+                    augment_kwargs={
+                        "brightness": brightness,
+                        "contrast": contrast,
+                        "color": color,
+                        "crop_mode": crop_mode,
+                        "center_ratio": center_crop,
+                        "manual_box": manual_box,
+                    },
+                ),
+            }
+    cached_timeline = st.session_state.get("episode_timeline")
+    if cached_timeline and cached_timeline.get("key") == timeline_key:
+        render_episode_timeline(cached_timeline["result"])
 
     with st.expander("State / Chunk Table", expanded=False):
         state = sample.get("observation.state")
