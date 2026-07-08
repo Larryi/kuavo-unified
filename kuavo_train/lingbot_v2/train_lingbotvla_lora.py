@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import os
 from pathlib import Path
+import sys
 
 import lingbotvla.utils.async_hf_checkpoint as async_hf_checkpoint
 
@@ -25,7 +26,12 @@ def _load_upstream_trainer():
     if spec is None or spec.loader is None:
         raise ImportError(f"Cannot load LingBot-VLA v2 trainer: {trainer_path}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(spec.name, None)
+        raise
     return module
 
 

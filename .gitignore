@@ -212,6 +212,7 @@ outputs/
 artifacts/
 
 log/
+log_lingbot_train.txt
 secrets/
 wandb/
 .vscode/
