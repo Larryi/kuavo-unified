@@ -34,6 +34,11 @@ def main(cfg: DictConfig) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     policy_cfg = cfg.policy
     env = {str(k): str(v) for k, v in dict(policy_cfg.get("env", {})).items()}
+    # JSON-valued LoRA settings are awkward to pass through Hydra's override grammar.
+    # Prefer an explicit shell environment variable when provided.
+    for key in ("KUAVO_LINGBOT_V2_LORA", "CUDA_VISIBLE_DEVICES", "LINGBOT_V2_ROOT"):
+        if os.getenv(key):
+            env[key] = os.environ[key]
     cuda_devices = [item for item in env.get("CUDA_VISIBLE_DEVICES", "0").split(",") if item.strip()]
     world_size = max(1, len(cuda_devices))
     wrapper_cfg = CustomLingbotConfigWrapper(
