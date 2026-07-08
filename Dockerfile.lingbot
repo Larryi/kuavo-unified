@@ -1,0 +1,148 @@
+# syntax=docker/dockerfile:1.7
+
+FROM ros:noetic-ros-core-focal AS builder
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG UBUNTU_MIRROR=https://mirrors.bfsu.edu.cn/ubuntu
+ARG PIP_INDEX_URL=https://mirrors.bfsu.edu.cn/pypi/web/simple
+ARG MINIFORGE_URL=https://mirrors.tuna.tsinghua.edu.cn/github-release/conda-forge/miniforge/LatestRelease/Miniforge3-Linux-x86_64.sh
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PATH=/opt/conda/bin:${PATH} \
+    PIP_INDEX_URL=${PIP_INDEX_URL} \
+    PIP_TRUSTED_HOST=mirrors.bfsu.edu.cn \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=0
+
+RUN sed -i "s|http://archive.ubuntu.com/ubuntu|${UBUNTU_MIRROR}|g" /etc/apt/sources.list && \
+    sed -i "s|http://security.ubuntu.com/ubuntu|${UBUNTU_MIRROR}|g" /etc/apt/sources.list && \
+    sed -i "s|http://ports.ubuntu.com/ubuntu-ports|${UBUNTU_MIRROR}-ports|g" /etc/apt/sources.list || true
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean && \
+    apt-get update && apt-get install -y --no-install-recommends \
+        curl wget gnupg2 lsb-release sudo ca-certificates build-essential bzip2 \
+        python3-dev portaudio19-dev \
+        ros-noetic-cv-bridge ros-noetic-apriltag-ros
+
+RUN curl -L "${MINIFORGE_URL}" -o /tmp/miniforge.sh && \
+    bash /tmp/miniforge.sh -b -p /opt/conda && \
+    rm -f /tmp/miniforge.sh && \
+    conda --version && \
+    (mamba --version || conda install -y mamba -c conda-forge)
+
+RUN cat > /root/.condarc <<'EOF'
+channels:
+  - conda-forge
+  - defaults
+show_channel_urls: true
+channel_priority: strict
+default_channels:
+  - https://mirrors.bfsu.edu.cn/anaconda/pkgs/main
+  - https://mirrors.bfsu.edu.cn/anaconda/pkgs/r
+custom_channels:
+  conda-forge: https://mirrors.bfsu.edu.cn/anaconda/cloud
+  pytorch: https://mirrors.bfsu.edu.cn/anaconda/cloud
+  nvidia: https://mirrors.bfsu.edu.cn/anaconda/cloud
+EOF
+
+RUN mkdir -p /root/.pip && \
+    cat > /root/.pip/pip.conf <<EOF
+[global]
+index-url = ${PIP_INDEX_URL}
+trusted-host = mirrors.bfsu.edu.cn
+disable-pip-version-check = true
+EOF
+
+WORKDIR /root/kuavo_data_challenge
+
+# Keep the large packed VLA environment in a cacheable layer.
+COPY myenv_lingbot.tar.gz /tmp/myenv_lingbot.tar.gz
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    mkdir -p ./myenv && \
+    tar -xzf /tmp/myenv_lingbot.tar.gz -C ./myenv && \
+    rm -f /tmp/myenv_lingbot.tar.gz && \
+    source ./myenv/bin/activate && \
+    conda-unpack && \
+    CC=/usr/bin/gcc CXX=/usr/bin/g++ python -m pip install \
+        --no-build-isolation PyAudio==0.2.14 \
+        --root-user-action=ignore && \
+    python -m pip install \
+        deprecated kuavo_humanoid_sdk==1.3.3 \
+        oss2 num2words requests \
+        --root-user-action=ignore && \
+    conda clean -afy && \
+    rm -rf ./myenv/lib/python*/site-packages/*/tests ./myenv/lib/python*/site-packages/*/test ./myenv/pkgs/*
+
+COPY . .
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    rm -f ./myenv_lingbot.tar.gz && \
+    source ./myenv/bin/activate && \
+    python -m pip install -e . --no-deps --root-user-action=ignore && \
+    python -m pip install -e ./third_party/lerobot --no-deps --root-user-action=ignore && \
+    python -m pip install -e ./third_party/lingbot-vla --no-deps --root-user-action=ignore && \
+    python -c "import flash_attn, lingbotvla, torch, transformers; print(torch.__version__, transformers.__version__)" && \
+    rm -rf ./myenv/pkgs ./myenv/conda-meta/history
+
+FROM ros:noetic-ros-core-focal
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG UBUNTU_MIRROR=https://mirrors.bfsu.edu.cn/ubuntu
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PATH=/root/kuavo_data_challenge/myenv/bin:/opt/conda/bin:${PATH} \
+    LINGBOT_ROOT=/root/kuavo_data_challenge/third_party/lingbot-vla \
+    QWEN25_PATH=/root/kuavo_data_challenge/artifacts/lingbot/qwen25_runtime \
+    PYTHONPATH=/root/kuavo_data_challenge/third_party/lingbot-vla:/opt/ros/noetic/lib/python3/dist-packages \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    ROS_IP=192.168.26.10 \
+    ROS_MASTER_URI=http://kuavo_master:11311
+
+WORKDIR /root/kuavo_data_challenge
+
+RUN sed -i "s|http://archive.ubuntu.com/ubuntu|${UBUNTU_MIRROR}|g" /etc/apt/sources.list && \
+    sed -i "s|http://security.ubuntu.com/ubuntu|${UBUNTU_MIRROR}|g" /etc/apt/sources.list && \
+    sed -i "s|http://ports.ubuntu.com/ubuntu-ports|${UBUNTU_MIRROR}-ports|g" /etc/apt/sources.list || true
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean && \
+    apt-get update && apt-get install -y --no-install-recommends \
+        ros-noetic-rosbag ros-noetic-cv-bridge ros-noetic-apriltag-ros portaudio19-dev
+
+COPY --from=builder /opt/conda /opt/conda
+COPY --from=builder /root/.condarc /root/.condarc
+COPY --from=builder /root/.pip /root/.pip
+COPY --from=builder /root/kuavo_data_challenge /root/kuavo_data_challenge
+
+# Diagnostics credentials are deliberately injected from outside the build context.
+RUN --mount=type=secret,id=kuavo_diag_env,target=/run/secrets/kuavo_diag.env \
+    test -s /run/secrets/kuavo_diag.env && \
+    mkdir -p /opt/kuavo_secrets && \
+    cp /run/secrets/kuavo_diag.env /opt/kuavo_secrets/kuavo_diag.env && \
+    chmod 600 /opt/kuavo_secrets/kuavo_diag.env
+
+RUN source /opt/ros/noetic/setup.bash && \
+    source /root/kuavo_data_challenge/myenv/bin/activate && \
+    python -c "import rospy, rosbag, pyaudio, cv2, gymnasium, oss2, num2words, hydra, imageio, omegaconf, sympy, tqdm, torchvision, yaml, kuavo_humanoid_sdk; from cv_bridge import CvBridge; from sensor_msgs.msg import CompressedImage, JointState; from std_msgs.msg import Bool; from std_srvs.srv import Trigger; import flash_attn, lingbotvla, torch, transformers; print('LingBot ROS runtime imports: OK')"
+
+RUN chmod -R 777 /root/kuavo_data_challenge/kuavo_deploy && \
+    echo "source /opt/ros/noetic/setup.bash" >> /root/.bashrc && \
+    echo "source /root/kuavo_data_challenge/myenv/bin/activate" >> /root/.bashrc && \
+    echo "export LINGBOT_ROOT=${LINGBOT_ROOT}" >> /root/.bashrc && \
+    echo "export QWEN25_PATH=${QWEN25_PATH}" >> /root/.bashrc && \
+    echo "export PYTHONPATH=${PYTHONPATH}" >> /root/.bashrc && \
+    echo "export ROS_IP=${ROS_IP}" >> /root/.bashrc && \
+    echo "export ROS_MASTER_URI=${ROS_MASTER_URI}" >> /root/.bashrc
+
+CMD ["bash"]

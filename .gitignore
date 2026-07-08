@@ -209,6 +209,7 @@ marimo/_lsp/
 __marimo__/
 
 outputs/
+artifacts/
 
 log/
 secrets/

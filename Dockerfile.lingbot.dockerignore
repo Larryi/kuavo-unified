@@ -1,0 +1,37 @@
+secrets/
+log/
+logs/
+wandb/
+.git/
+.agents/
+.codex/
+.cache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+outputs/
+training_outputs/
+docker_assets/
+raw_data/
+*.bag
+*.tar
+*.tar.gz
+*.zip
+
+# The LingBot build needs exactly this packed environment and artifact subtree.
+!myenv_lingbot.tar.gz
+artifacts/*
+!artifacts/lingbot/
+artifacts/lingbot/*
+!artifacts/lingbot/qwen25_runtime/
+!artifacts/lingbot/qwen25_runtime/**
+!artifacts/lingbot/run_20260703_113523/
+!artifacts/lingbot/run_20260703_113523/**
+
+# Upload checkpoints and completed submissions must never enter the build context.
+.ossutil_checkpoint/
+hjm_kdc_real_task1_lingbot.zip
