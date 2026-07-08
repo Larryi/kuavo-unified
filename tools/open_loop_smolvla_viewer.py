@@ -264,6 +264,28 @@ def normalize_gt_actions(action: torch.Tensor, action_dim: int) -> torch.Tensor:
     return action.reshape(action.shape[0], -1)
 
 
+def read_raw_gt_chunk(dataset, relative_frame: int, horizon: int) -> torch.Tensor:
+    """Read GT actions directly from parquet rows, bypassing delta-query padding."""
+
+    row = dataset.hf_dataset[relative_frame]
+    episode_index = scalar_int(row["episode_index"])
+    absolute_index = scalar_int(row["index"])
+    episode = dataset.meta.episodes[episode_index]
+    episode_end = int(episode["dataset_to_index"])
+
+    absolute_to_relative = getattr(dataset, "_absolute_to_relative_idx", None)
+    if absolute_to_relative is None:
+        absolute_to_relative = {i: i for i in range(len(dataset.hf_dataset))}
+
+    actions = []
+    for offset in range(max(1, horizon)):
+        target_absolute = min(absolute_index + offset, episode_end - 1)
+        target_relative = absolute_to_relative[target_absolute]
+        action = dataset.hf_dataset[target_relative]["action"]
+        actions.append(torch.as_tensor(action).detach().cpu().float().reshape(-1))
+    return torch.stack(actions)
+
+
 @st.cache_resource(show_spinner="Loading policy checkpoint...")
 def load_model(
     policy_path: str,
@@ -370,8 +392,7 @@ def build_episode_timeline(
     if frame_count <= 0:
         raise ValueError("The selected episode contains no frames.")
 
-    first_sample = dataset[0]
-    first_gt = normalize_gt_actions(first_sample["action"], first_sample["action"].shape[-1])
+    first_gt = read_raw_gt_chunk(dataset, 0, 1)
     action_dim = first_gt.shape[-1]
     gt = np.full((frame_count, action_dim), np.nan, dtype=np.float32)
     pred_sum = np.zeros((frame_count, action_dim), dtype=np.float64)
@@ -384,7 +405,7 @@ def build_episode_timeline(
     ]
 
     for frame in range(frame_count):
-        gt[frame] = normalize_gt_actions(dataset[frame]["action"], action_dim)[0].numpy()
+        gt[frame] = read_raw_gt_chunk(dataset, frame, 1)[0].numpy()
 
     for frame in range(0, frame_count, inference_stride):
         sample = dict(dataset[frame])
@@ -597,7 +618,7 @@ def main() -> None:
             preview_sample[key] = normalize_depth_tensor(preview_sample[key])
 
     pred = predict_actions(policy, preprocessor, postprocessor, preview_sample, task, predict_mode, policy_type)
-    gt = normalize_gt_actions(sample["action"], pred.shape[-1])
+    gt = read_raw_gt_chunk(dataset, idx, pred.shape[0])
     if pred.shape[-1] != gt.shape[-1]:
         st.error("Predicted action dimension does not match dataset action dimension.")
         st.write({"pred_shape": list(pred.shape), "gt_shape": list(gt.shape)})
