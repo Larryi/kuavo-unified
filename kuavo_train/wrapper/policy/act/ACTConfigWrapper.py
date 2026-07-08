@@ -15,6 +15,7 @@ from typing import TypeVar
 from huggingface_hub import HfApi, ModelCard, ModelCardData, hf_hub_download
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
+from kuavo_train.wrapper.policy.config_loading import decode_local_policy_config
 
 T = TypeVar("T", bound="CustomACTConfigWrapper")
 
@@ -112,6 +113,9 @@ class CustomACTConfigWrapper(ACTConfig):
         revision: str | None = None,
         **policy_kwargs,
     ) -> T:
+        local_config = decode_local_policy_config(cls, pretrained_name_or_path, "custom_act")
+        if local_config is not None:
+            return local_config
         parent_cls = PreTrainedConfig 
         return parent_cls.from_pretrained(
             pretrained_name_or_path,
@@ -124,4 +128,3 @@ class CustomACTConfigWrapper(ACTConfig):
             revision=revision,
             **policy_kwargs,
         )
-        

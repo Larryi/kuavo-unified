@@ -16,6 +16,7 @@ from huggingface_hub import HfApi, ModelCard, ModelCardData, hf_hub_download
 from huggingface_hub.constants import SAFETENSORS_SINGLE_FILE
 from huggingface_hub.errors import HfHubHTTPError
 from lerobot.optim.optimizers import AdamConfig,AdamWConfig
+from kuavo_train.wrapper.policy.config_loading import decode_local_policy_config
 
 T = TypeVar("T", bound="CustomDiffusionConfigWrapper")
 
@@ -152,6 +153,9 @@ class CustomDiffusionConfigWrapper(DiffusionConfig):
         revision: str | None = None,
         **policy_kwargs,
     ) -> T:
+        local_config = decode_local_policy_config(cls, pretrained_name_or_path, "custom_diffusion")
+        if local_config is not None:
+            return local_config
         #Call from_pretrained with the parent class type to trigger the Choice mechanism to identify subclasses
         parent_cls = PreTrainedConfig  #Or directly DiffusionConfig
 
@@ -185,4 +189,3 @@ class CustomDiffusionConfigWrapper(DiffusionConfig):
                 eps=self.optimizer_eps,
                 weight_decay=self.optimizer_weight_decay,
             )
-        
