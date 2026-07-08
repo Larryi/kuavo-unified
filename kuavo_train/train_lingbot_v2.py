@@ -74,6 +74,8 @@ def main(cfg: DictConfig) -> None:
         str(micro_batch),
         "--train.global_batch_size",
         str(global_batch),
+        "--train.gradient_accumulation_steps",
+        str(accumulation),
         "--train.max_steps",
         str(int(cfg.training.max_training_step)),
         "--train.num_train_epochs",
