@@ -93,6 +93,13 @@ def load_policy_and_processors(
 
         policy = LingbotDeployPolicy(model_path=pretrained_path, **policy_kwargs)
         preprocessor, postprocessor = (lambda obs: obs), (lambda action: action)
+    elif policy_type == "lingbot_v2":
+        if device.type != "cuda":
+            raise ValueError("LingBot-VLA v2 inference requires a CUDA device.")
+        from kuavo_deploy.utils.lingbot_v2_adapter import LingbotV2DeployPolicy
+
+        policy = LingbotV2DeployPolicy(model_path=pretrained_path, **policy_kwargs)
+        preprocessor, postprocessor = (lambda obs: obs), (lambda action: action)
     else:
         raise ValueError(f"Unsupported local policy type: {policy_type}")
 

@@ -172,9 +172,13 @@ class ConfigInference:
     lingbot_norm_stats_file: str = ""
     lingbot_data_type: str = "robotwin"
     lingbot_execute_raw_action: bool = False
+    lingbot_v2_root: str = ""
+    qwen3vl_path: str = ""
+    lingbot_v2_robot_name: str = "kuavo_v2"
+    lingbot_v2_use_compile: bool = False
 
     def validate(self):
-        if self.policy_type not in ["diffusion", "act", "lingbot"]:
+        if self.policy_type not in ["diffusion", "act", "lingbot", "lingbot_v2"]:
             #If more strategies are supported in the future, please expand here
             # Expansion room for future support for other policies
             raise ValueError(f"Unsupported policy_type '{self.policy_type}'")

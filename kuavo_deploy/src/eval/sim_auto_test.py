@@ -170,6 +170,19 @@ def setup_policy(pretrained_path, policy_type, cfg, device=torch.device("cuda"))
             data_type=getattr(cfg, "lingbot_data_type", "robotwin"),
             execute_raw_action=getattr(cfg, "lingbot_execute_raw_action", False),
         )
+    elif policy_type == 'lingbot_v2':
+        from kuavo_deploy.utils.lingbot_v2_adapter import LingbotV2DeployPolicy
+        policy = LingbotV2DeployPolicy(
+            model_path=Path(pretrained_path),
+            lingbot_v2_root=getattr(cfg, "lingbot_v2_root", ""),
+            qwen3vl_path=getattr(cfg, "qwen3vl_path", ""),
+            robot_name=getattr(cfg, "lingbot_v2_robot_name", "kuavo_v2"),
+            task_prompt=getattr(cfg, "task_prompt", "") or getattr(cfg, "task", ""),
+            use_length=getattr(cfg, "lingbot_use_length", 5),
+            chunk_ret=getattr(cfg, "lingbot_chunk_ret", True),
+            norm_stats_file=getattr(cfg, "lingbot_norm_stats_file", ""),
+            use_compile=getattr(cfg, "lingbot_v2_use_compile", False),
+        )
     else:
         raise ValueError(f"Unsupported policy type: {policy_type}")
     
