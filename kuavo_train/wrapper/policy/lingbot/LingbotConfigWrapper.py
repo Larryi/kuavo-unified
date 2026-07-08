@@ -57,6 +57,7 @@ class CustomLingbotConfigWrapper:
                 return p
 
         candidates = [
+            (repo_root / "../lingbot-vla-v2").resolve(),
             (repo_root / "../lingbot-vla").resolve(),
             (repo_root / "../../lingbot-vla").resolve(),
             Path("/home/yunxi/lmy/VLA/lingbot-vla"),

@@ -38,7 +38,7 @@ class CustomLingbotPolicyWrapper:
 
         pretty = " ".join(shlex.quote(x) for x in cmd)
         pythonpath_parts = [part for part in env.get("PYTHONPATH", "").split(":") if part]
-        lerobot_root = pythonpath_parts[1] if len(pythonpath_parts) > 1 else ""
+        lerobot_root = pythonpath_parts[2] if len(pythonpath_parts) > 2 else ""
         print(f"[INFO] LingBot workdir: {workdir}")
         print(f"[INFO] LingBot lerobot_root: {lerobot_root}")
         print(f"[INFO] LingBot launch: {pretty}")

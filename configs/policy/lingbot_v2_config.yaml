@@ -1,0 +1,38 @@
+hydra:
+  run:
+    dir: ./outputs/train_hydra_save/singlerun/${now:%Y%m%d_%H%M%S}
+
+task: r1
+method: lingbot_v2_lora
+timestamp: ${now:%Y%m%d_%H%M%S}
+repoid: lerobot/${task}
+root: /mnt/pqssd/Real_PQ_3.0/TASK1_SZ/task1_supertrimmed_200
+
+training:
+  output_directory: outputs/train/${task}/${method}
+  batch_size: 1
+  accumulation_steps: 8
+  max_epoch: 10
+  max_training_step: 10000
+  resume: false
+  resume_timestamp: ""
+  device: cuda
+
+policy_name: lingbot_v2
+
+policy:
+  lingbot_root: /home/larry/lingbot-vla-v2
+  lerobot_root: /home/larry/kuavo_data_challenge/third_party/lerobot
+  train_entry: kuavo_train/lingbot_v2/train_lingbotvla_lora.py
+  config_path: configs/policy/lingbot_v2/kuavo_lora.yaml
+  model_path: /mnt/pqssd/pretrained/lingbot-vla-v2-6b
+  tokenizer_path: /mnt/pqssd/pretrained/Qwen3-VL-4B-Instruct
+  dry_run: false
+  env:
+    CUDA_VISIBLE_DEVICES: "0"
+    LINGBOT_V2_ROOT: /home/larry/lingbot-vla-v2
+    HF_HUB_OFFLINE: "1"
+    TRANSFORMERS_OFFLINE: "1"
+    KUAVO_LINGBOT_V2_LORA: '{"enabled":true,"rank":8,"alpha":16,"dropout":0.0}'
+  extra_args: []
+

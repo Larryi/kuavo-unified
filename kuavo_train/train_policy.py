@@ -22,7 +22,6 @@ import shutil
 import os
 import socket
 from hydra.utils import instantiate
-from diffusers.optimization import get_scheduler
 
 from lerobot.configs.types import FeatureType, NormalizationMode
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata, LeRobotDataset
@@ -34,7 +33,6 @@ from kuavo_train.wrapper.dataset.LeRobotDatasetWrapper import CustomLeRobotDatas
 from kuavo_train.utils.augmenter import crop_image, resize_image, DeterministicAugmenterColor
 from kuavo_train.utils.utils import save_rng_state, load_rng_state
 from lerobot.policies.act.modeling_act import ACTPolicy
-from diffusers.optimization import get_scheduler
 from kuavo_train.utils.transforms import ImageTransforms, ImageTransformsConfig, ImageTransformConfig
 
 from functools import partial
@@ -88,6 +86,8 @@ def build_delta_timestamps(dataset_metadata, policy_cfg):
 
 def build_optimizer_and_scheduler(policy, cfg, total_frames):
     """Return optimizer and scheduler."""
+    from diffusers.optimization import get_scheduler
+
     optimizer = policy.config.get_optimizer_preset().build(policy.parameters())
     # If `max_training_step` is specified, it takes precedence; 
     # otherwise, the value is automatically determined based on `max_epoch`.
@@ -358,13 +358,13 @@ def _launch_lingbot_from_policy_name(cfg: DictConfig) -> int:
     if lingbot_cfg.get("morgbd_path"):
         extra_args.extend(["--model.morgbd_path", str(lingbot_cfg["morgbd_path"])])
 
-    print(f"[INFO] policy_name=lingbot detected, dispatching via wrapper. extra_args={extra_args}")
+    print(f"[INFO] policy_name={cfg.policy_name} detected, dispatching via wrapper. extra_args={extra_args}")
     runner = CustomLingbotPolicyWrapper(wrapper_cfg)
     return runner.launch(repo_root=repo_root, extra_args=extra_args)
 
 @hydra.main(config_path="../configs/policy/", config_name="diffusion_config", version_base=None)
 def main(cfg: DictConfig):
-    if cfg.policy_name == "lingbot":
+    if cfg.policy_name in {"lingbot", "lingbot_v2"}:
         code = _launch_lingbot_from_policy_name(cfg)
         if code != 0:
             raise RuntimeError(f"LingBot training failed with exit code {code}")

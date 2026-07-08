@@ -1,0 +1,29 @@
+data:
+  datasets_type: vla
+  data_name: kuavo_v2
+  train_path: /path/to/lerobot_dataset
+  robot_config_root: configs/robot_configs
+  joints:
+    - arm.position: 14
+    - end.position: 14
+    - effector.position: 2
+  cameras:
+    - camera_top
+    - camera_wrist_right
+  norm_type:
+    - arm.position: meanstd
+    - end.position: meanstd
+    - effector.position: meanstd
+  prompt_type: global
+  num_workers: 4
+  use_future_image: true
+  norm_path: assets/norm_stats/kuavo_v2_meanstd.json
+  data_ratio_for_norm_compute: 1.0
+  norm_merge_chunk_dim: true
+
+train:
+  output_dir: /tmp/lingbot_v2_norm
+  micro_batch_size: 8
+  global_batch_size: 8
+  chunk_size: 50
+  max_steps: 1

@@ -70,7 +70,7 @@ class CustomLingbotModelWrapper:
         env = os.environ.copy()
         env.setdefault("TOKENIZERS_PARALLELISM", "false")
         # Ensure current repo and compatible LeRobot are imported before any installed package.
-        env["PYTHONPATH"] = ":".join([str(repo_root), str(lerobot_root)])
+        env["PYTHONPATH"] = ":".join([str(repo_root), str(lingbot_root), str(lerobot_root)])
         env.update(self.config.env)
 
         return workdir, cmd, env

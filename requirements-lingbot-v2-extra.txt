@@ -1,0 +1,7 @@
+# LingBot-VLA v2 imports these packages but does not pin them upstream.
+numpy==1.26.4
+pydantic==2.10.6
+pydantic-core==2.27.2
+numpydantic==1.6.8
+utils3d @ git+https://github.com/EasternJournalist/utils3d.git@3fab839f0be9931dac7c8488eb0e1600c236e183
+
