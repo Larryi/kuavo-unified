@@ -164,6 +164,32 @@ def _install_dynamic_action_selector(policy) -> None:
     policy.select_action = MethodType(select_action, policy)
 
 
+def _install_chunk_step_compat(server) -> None:
+    """Recover the cached 1-D action from LingBot's broken chunk-step branch."""
+
+    original_infer = server.infer
+
+    def infer(self, observation, *args, **kwargs):
+        try:
+            return original_infer(observation, *args, **kwargs)
+        except IndexError as exc:
+            known_shape_bug = "too many indices" in str(exc) and "1-dimensional" in str(exc)
+            if (
+                self.chunk_ret
+                or self.use_length <= 0
+                or self.last_action_chunk is None
+                or not known_shape_bug
+            ):
+                raise
+
+            step_in_chunk = self.global_step % self.use_length
+            action = self.last_action_chunk[step_in_chunk, : self.action_dim]
+            self.global_step += 1
+            return {"action": action}
+
+    server.infer = MethodType(infer, server)
+
+
 class LingbotDeployPolicy:
     """Adapter that exposes LingBot-VLA inference as `select_action(obs)`."""
 
@@ -229,6 +255,7 @@ class LingbotDeployPolicy:
             upstream_normalizer.__init__ = upstream_normalizer_init
 
         _install_dynamic_action_selector(self.policy.vla)
+        _install_chunk_step_compat(self.policy)
 
         if norm_stats_file:
             with open(norm_stats_file, "r", encoding="utf-8") as f:
