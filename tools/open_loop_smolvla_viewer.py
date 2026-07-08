@@ -37,8 +37,11 @@ DEFAULT_LINGBOT_POLICY_PATH = (
     "/mnt/pqssd/lingbot_weights/clean_meanstd_fm_L2V2_mb16_gb16_8k_20260623_175250/"
     "checkpoints/global_step_8000/hf_ckpt"
 )
+DEFAULT_LINGBOT_V2_POLICY_PATH = ""
 DEFAULT_LINGBOT_ROOT = "/home/larry/lingbot-vla"
 DEFAULT_QWEN25_PATH = "/home/larry/Qwen2.5_VL"
+DEFAULT_LINGBOT_V2_ROOT = "/home/larry/lingbot-vla-v2"
+DEFAULT_QWEN3VL_PATH = "/mnt/pqssd/pretrained/Qwen3-VL-4B-Instruct"
 DEFAULT_NORM_STATS = "assets/norm_stats/lerobot_trimmed.json"
 DEFAULT_TASK = "Pick and Place the safety belt, cable and pin connector"
 
@@ -309,6 +312,17 @@ def load_model(
             "data_type": "customized",
             "execute_raw_action": False,
         }
+    elif policy_type == "lingbot_v2":
+        policy_kwargs = {
+            "lingbot_v2_root": lingbot_root,
+            "qwen3vl_path": qwen25_path,
+            "robot_name": "kuavo_v2",
+            "task_prompt": task,
+            "use_length": 50,
+            "chunk_ret": True,
+            "norm_stats_file": norm_stats_file,
+            "use_compile": False,
+        }
     return load_policy_and_processors(
         Path(policy_path), policy_type, device, policy_kwargs=policy_kwargs
     )
@@ -509,18 +523,30 @@ def main() -> None:
     with st.sidebar:
         dataset_root = st.text_input("Dataset root", DEFAULT_DATASET_ROOT)
         repo_id = st.text_input("Repo ID", "kuavo/task1_sz")
-        policy_type = st.selectbox("Policy type", ["smolvla", "act", "diffusion", "lingbot"], index=0)
-        default_policy_path = DEFAULT_LINGBOT_POLICY_PATH if policy_type == "lingbot" else DEFAULT_POLICY_PATH
+        policy_type = st.selectbox(
+            "Policy type", ["smolvla", "act", "diffusion", "lingbot", "lingbot_v2"], index=0
+        )
+        if policy_type == "lingbot":
+            default_policy_path = DEFAULT_LINGBOT_POLICY_PATH
+        elif policy_type == "lingbot_v2":
+            default_policy_path = DEFAULT_LINGBOT_V2_POLICY_PATH
+        else:
+            default_policy_path = DEFAULT_POLICY_PATH
         policy_path = st.text_input(
             "Policy path", default_policy_path, key=f"policy_path_{policy_type}"
         )
         task = st.text_area("Task", DEFAULT_TASK)
-        device_options = ["cuda"] if policy_type == "lingbot" else ["cuda", "cpu"]
+        device_options = ["cuda"] if policy_type in {"lingbot", "lingbot_v2"} else ["cuda", "cpu"]
         device = st.selectbox("Device", device_options, index=0)
         video_backend = st.selectbox("Video backend", ["pyav", "torchcodec"], index=0)
-        if policy_type == "lingbot":
-            lingbot_root = st.text_input("LingBot root", DEFAULT_LINGBOT_ROOT)
-            qwen25_path = st.text_input("Qwen2.5 processor path", DEFAULT_QWEN25_PATH)
+        if policy_type in {"lingbot", "lingbot_v2"}:
+            is_v2 = policy_type == "lingbot_v2"
+            lingbot_root = st.text_input(
+                "LingBot root", DEFAULT_LINGBOT_V2_ROOT if is_v2 else DEFAULT_LINGBOT_ROOT
+            )
+            qwen25_path = st.text_input(
+                "Qwen processor path", DEFAULT_QWEN3VL_PATH if is_v2 else DEFAULT_QWEN25_PATH
+            )
             norm_stats_file = st.text_input("Norm stats file", DEFAULT_NORM_STATS)
         else:
             lingbot_root = ""
