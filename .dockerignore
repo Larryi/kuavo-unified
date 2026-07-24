@@ -1,11 +1,41 @@
 secrets/
 log/
+logs/
 wandb/
 .git/
 .agents/
 .codex/
+.cache/
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+*.egg-info/
+
+# Training products and model artifacts are runtime mounts, never image inputs.
+outputs/
+training_outputs/
+artifacts/
+checkpoints/
+**/outputs/
+**/artifacts/
+**/checkpoints/
+*.pt
+*.pth
+*.safetensors
+*.ckpt
+*.bag
+*.tar
+*.tar.gz
+*.zip
+
+# The classic image installs only the pinned LeRobot source dependency.
+third_party/lingbot-vla/
+third_party/lingbot-vla-v2/
+third_party/openpi-kuavo/
+Dockerfile.lingbot*
+log_lingbot_train.txt
+
+# The packed environment is supplied through a separate named context.
+myenv.tar.gz
