@@ -1,3 +1,12 @@
 [submodule "third_party/lerobot"]
 	path = third_party/lerobot
 	url = https://github.com/huggingface/lerobot.git
+[submodule "third_party/lingbot-vla"]
+	path = third_party/lingbot-vla
+	url = https://github.com/robbyant/lingbot-vla.git
+[submodule "third_party/openpi-kuavo"]
+	path = third_party/openpi-kuavo
+	url = https://github.com/Larryi/openpi.git
+[submodule "third_party/lingbot-vla-v2"]
+	path = third_party/lingbot-vla-v2
+	url = https://github.com/Larryi/lingbot-vla-v2.git

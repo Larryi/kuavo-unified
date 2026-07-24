@@ -62,6 +62,7 @@ def test_lingbot_v2_deploy_payload_preserves_kuavo_slots():
     policy = LingbotV2DeployPolicy.__new__(LingbotV2DeployPolicy)
     policy.task_prompt = "move"
     policy.action_dim = 16
+    policy.state_dim = 16
     image = torch.zeros(3, 8, 8)
     state = torch.arange(16, dtype=torch.float32)
     payload = policy._payload(

@@ -6,7 +6,11 @@ __pycache__/
 # C extensions
 *.so
 
-third_party/
+third_party/*
+!third_party/lerobot
+!third_party/lingbot-vla
+!third_party/lingbot-vla-v2
+!third_party/openpi-kuavo
 
 # Distribution / packaging
 .Python
