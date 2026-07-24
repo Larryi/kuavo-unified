@@ -32,6 +32,10 @@ from lerobot.policies.act.modeling_act import ACTPolicy
 from diffusers.optimization import get_scheduler
 from kuavo_train.utils.transforms import ImageTransforms, ImageTransformsConfig, ImageTransformConfig
 from kuavo_train.compile_utils import maybe_compile_policy
+from kuavo_train.accelerate_utils import (
+    dataloader_worker_options,
+    resolve_accelerate_options,
+)
 
 from functools import partial
 from contextlib import nullcontext
@@ -212,7 +216,13 @@ def remove_aug_step(pipeline, step_to_remove):
 
 @hydra.main(config_path="../configs/policy/", config_name="diffusion_config", version_base=None)
 def main(cfg: DictConfig):
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    accelerate_options = resolve_accelerate_options(cfg.training, cfg.policy)
+    ddp_kwargs = DistributedDataParallelKwargs(
+        find_unused_parameters=accelerate_options["ddp_find_unused_parameters"]
+    )
+    if torch.cuda.is_available():
+        torch.backends.cuda.matmul.allow_tf32 = accelerate_options["allow_tf32"]
+        torch.backends.cudnn.allow_tf32 = accelerate_options["allow_tf32"]
     # Initialize Accelerator
     accelerator = accelerate.Accelerator(
         gradient_accumulation_steps=cfg.training.accumulation_steps,
@@ -220,7 +230,7 @@ def main(cfg: DictConfig):
         # log_with="tensorboard",             # Disable logging
         device_placement=True,                # Explicitly enable device placement
         step_scheduler_with_optimizer=False,  # A fix to the stepping logic as accelerate might make this thread-unsafe.
-        mixed_precision="fp16" if cfg.policy.get("use_amp", False) else "no",
+        mixed_precision=accelerate_options["mixed_precision"],
         kwargs_handlers=[ddp_kwargs]          # transfer DDP kwargs
     )
 
@@ -231,11 +241,11 @@ def main(cfg: DictConfig):
     accelerate.utils.set_seed(cfg.training.seed)
 
     # mkdir and output TensorBoard only in the main process
-    output_directory = None
+    output_directory = Path(cfg.training.output_directory) / f"run_{cfg.timestamp}"
     if accelerator.is_main_process:
-        output_directory = Path(cfg.training.output_directory) / f"run_{cfg.timestamp}"
         output_directory.mkdir(parents=True, exist_ok=True)
         writer = SummaryWriter(log_dir=str(output_directory))
+    accelerator.wait_for_everyone()
 
     # Dataset metadata and features
     dataset_metadata = LeRobotDatasetMetadata(cfg.repoid, root=cfg.root)
@@ -302,7 +312,7 @@ def main(cfg: DictConfig):
         sampler=sampler,
         pin_memory=(device.type != "cpu"),
         drop_last=cfg.training.drop_last,
-        prefetch_factor=2 if cfg.training.num_workers > 0 else None,
+        **dataloader_worker_options(cfg.training),
     )
     # Use accelerator to prepare data, model, and optimizer
     accelerator.wait_for_everyone()
@@ -324,12 +334,15 @@ def main(cfg: DictConfig):
         try:
             # Load state
             accelerator.load_state(resume_path / "epochlatest")
-            if accelerator.is_main_process:
-                latest_training_state = torch.load(resume_path / "training_latest_state.pth", map_location='cpu')
-                steps = latest_training_state["steps"]
-                start_epoch = latest_training_state["epoch"]
-                best_loss = latest_training_state["best_loss"]
-                accelerator.print(f"Resumed training from epoch {start_epoch}, step {steps}, best_loss {best_loss}")
+            latest_training_state = torch.load(
+                resume_path / "training_latest_state.pth", map_location="cpu"
+            )
+            steps = latest_training_state["steps"]
+            start_epoch = latest_training_state["epoch"]
+            best_loss = latest_training_state["best_loss"]
+            accelerator.print(
+                f"Resumed training from epoch {start_epoch}, step {steps}, best_loss {best_loss}"
+            )
         except Exception as e:
             accelerator.print("Failed to load checkpoint:", e, " Starting training from scratch.")
     else:
@@ -353,7 +366,7 @@ def main(cfg: DictConfig):
             with accelerator.accumulate(policy):
                 # batch = {k: (v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v) for k, v in batch.items()}
                 with accelerator.autocast():
-                    loss, _ = policy.forward(batch)
+                    loss, _ = policy(batch)
                 accelerator.backward(loss)
 
                 if accelerator.sync_gradients:
@@ -369,6 +382,11 @@ def main(cfg: DictConfig):
                     steps += 1
                     batch_count += 1
                     total_loss += accelerator.gather(loss).mean().item()
+                    if (
+                        cfg.training.max_training_step is not None
+                        and steps >= int(cfg.training.max_training_step)
+                    ):
+                        break
 
         total_loss = total_loss / batch_count if batch_count > 0 else total_loss
         
@@ -386,9 +404,7 @@ def main(cfg: DictConfig):
                 unwrapped_policy = accelerator.unwrap_model(policy)
                 unwrapped_policy.save_pretrained(output_directory / f"epoch{epoch+1}")
 
-                # save latest epoch training state based on accelerator save_state
             accelerator.print("!!!!!!Saving latest epoch training state...,DON'T CTRL+C EXIT!!!!!!")
-            accelerator.save_state(output_directory / "epochlatest")
             training_state = {
                 "epoch": epoch+1, 
                 "steps": steps,
@@ -397,6 +413,16 @@ def main(cfg: DictConfig):
             torch.save(training_state, output_directory / "training_latest_state.pth")
             accelerator.print(f"Epoch {epoch+1} completed. Avg Loss: {total_loss:.4f}. Best Loss: {best_loss:.4f}")
         accelerator.wait_for_everyone()
+        accelerator.save_state(output_directory / "epochlatest")
+        accelerator.wait_for_everyone()
+        if (
+            cfg.training.max_training_step is not None
+            and steps >= int(cfg.training.max_training_step)
+        ):
+            accelerator.print(
+                f"Reached max_training_step={cfg.training.max_training_step}; stopping."
+            )
+            break
 
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
