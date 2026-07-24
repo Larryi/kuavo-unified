@@ -1,11 +1,13 @@
 import torch
 
 from kuavo_deploy.utils.action_postprocessing import (
+    CausalActionPostprocessor,
     CausalChunkBoundaryBlender,
     CausalJointRateLimiter,
     ChunkBoundaryBlendConfig,
     JointRateLimitConfig,
 )
+from kuavo_deploy.utils.gripper_latch import GripperIntentLatch, GripperLatchConfig
 
 
 def test_rate_limiter_preserves_unselected_dimensions_and_state_across_chunks():
@@ -81,3 +83,23 @@ def test_action_postprocessors_reject_invalid_configuration():
     ]
     for processor, chunk, message in cases:
         assert_value_error(processor, chunk, message)
+
+
+def test_combined_pipeline_anchors_next_chunk_to_final_emitted_command():
+    blender = CausalChunkBoundaryBlender(ChunkBoundaryBlendConfig((0,), blend_steps=2))
+    limiter = CausalJointRateLimiter(JointRateLimitConfig((0,), max_delta=(1.0,)))
+    latch = GripperIntentLatch(
+        GripperLatchConfig((1,), intent_steps=1, min_close_steps=0, min_open_steps=0)
+    )
+    pipeline = CausalActionPostprocessor(
+        torch.tensor([0.0, 0.0]),
+        boundary_blender=blender,
+        rate_limiter=limiter,
+        gripper_latch=latch,
+    )
+
+    first = pipeline.process_chunk(torch.tensor([[10.0, 1.0], [10.0, 1.0]]))
+    second = pipeline.process_chunk(torch.tensor([[10.0, 1.0]]))
+
+    assert torch.equal(first, torch.tensor([[1.0, 1.0], [2.0, 1.0]]))
+    assert torch.equal(second, torch.tensor([[3.0, 1.0]]))

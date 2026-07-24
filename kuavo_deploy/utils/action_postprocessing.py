@@ -7,6 +7,8 @@ from typing import Iterable, Optional
 
 import torch
 
+from kuavo_deploy.utils.gripper_latch import GripperIntentLatch
+
 
 def _indices_tensor(indices: Iterable[int], action_dim: int, device: torch.device) -> torch.Tensor:
     values = tuple(dict.fromkeys(int(index) for index in indices))
@@ -126,4 +128,51 @@ class CausalChunkBoundaryBlender:
             weight = float(row + 1) / float(self.config.blend_steps)
             result[row, indices] = (1.0 - weight) * anchor + weight * chunk[row, indices]
         self.previous_action = result[-1].detach().clone()
+        return result
+
+
+class CausalActionPostprocessor:
+    """Apply boundary blending, rate limiting, and gripper latching in one causal order."""
+
+    def __init__(
+        self,
+        initial_action: torch.Tensor,
+        *,
+        rate_limiter: Optional[CausalJointRateLimiter] = None,
+        boundary_blender: Optional[CausalChunkBoundaryBlender] = None,
+        gripper_latch: Optional[GripperIntentLatch] = None,
+    ):
+        self.rate_limiter = rate_limiter
+        self.boundary_blender = boundary_blender
+        self.gripper_latch = gripper_latch
+        self.reset(initial_action)
+
+    @property
+    def enabled(self) -> bool:
+        return any((self.boundary_blender, self.rate_limiter, self.gripper_latch))
+
+    def reset(self, initial_action: torch.Tensor) -> None:
+        initial_action = initial_action.detach().clone().flatten()
+        if self.boundary_blender is not None:
+            self.boundary_blender.reset(initial_action)
+        if self.rate_limiter is not None:
+            self.rate_limiter.reset(initial_action)
+        if self.gripper_latch is not None:
+            self.gripper_latch.reset(
+                {
+                    index: float(initial_action[index])
+                    for index in self.gripper_latch.config.action_indices
+                }
+            )
+
+    def process_chunk(self, chunk: torch.Tensor) -> torch.Tensor:
+        result = chunk.detach().clone()
+        if self.boundary_blender is not None:
+            result = self.boundary_blender.process_chunk(result)
+        if self.rate_limiter is not None:
+            result = self.rate_limiter.process_chunk(result)
+        if self.gripper_latch is not None:
+            result = self.gripper_latch.process_chunk(result)
+        if self.boundary_blender is not None and len(result):
+            self.boundary_blender.previous_action = result[-1].detach().clone()
         return result

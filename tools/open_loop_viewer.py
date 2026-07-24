@@ -23,6 +23,18 @@ import torch
 from PIL import Image, ImageEnhance
 
 import lerobot_patches.custom_patches  # noqa: F401
+from kuavo_deploy.utils.action_postprocessing import (
+    CausalActionPostprocessor,
+    CausalChunkBoundaryBlender,
+    CausalJointRateLimiter,
+    ChunkBoundaryBlendConfig,
+    JointRateLimitConfig,
+)
+from kuavo_deploy.utils.gripper_latch import (
+    GripperIntentLatch,
+    GripperLatchConfig,
+    parse_action_indices,
+)
 from kuavo_deploy.utils.policy_loader import load_policy_and_processors
 from lerobot.datasets.factory import resolve_delta_timestamps
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
@@ -322,6 +334,78 @@ def normalize_gt_actions(action: torch.Tensor, action_dim: int) -> torch.Tensor:
     return action.reshape(action.shape[0], -1)
 
 
+def current_action_state(sample: dict, action_dim: int) -> torch.Tensor:
+    """Read the latest action-shaped state vector used to seed causal filters."""
+
+    value = torch.as_tensor(sample["observation.state"]).detach().cpu().float()
+    if value.ndim == 1 and value.numel() == action_dim:
+        return value
+    if value.ndim >= 2 and value.shape[-1] == action_dim:
+        return value.reshape(-1, action_dim)[-1]
+    raise ValueError(
+        f"observation.state shape {tuple(value.shape)} cannot seed action_dim={action_dim}."
+    )
+
+
+@st.cache_data(show_spinner="Computing dataset action-rate limits...")
+def compute_dataset_action_limits(
+    _dataset,
+    action_indices: tuple[int, ...],
+    percentile: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    actions = np.asarray(_dataset.hf_dataset["action"], dtype=np.float64)
+    episodes = np.asarray(_dataset.hf_dataset["episode_index"], dtype=np.int64)
+    if actions.ndim != 2:
+        raise ValueError(f"Expected dataset actions [frames, dim], got {actions.shape}.")
+    if any(index < 0 or index >= actions.shape[-1] for index in action_indices):
+        raise ValueError(f"Joint indices {action_indices} exceed action_dim={actions.shape[-1]}.")
+    first_valid = episodes[1:] == episodes[:-1]
+    first_delta = np.diff(actions, axis=0)[first_valid][:, action_indices]
+    second_valid = (episodes[2:] == episodes[1:-1]) & (episodes[1:-1] == episodes[:-2])
+    second_delta = (actions[2:] - 2.0 * actions[1:-1] + actions[:-2])[second_valid][
+        :, action_indices
+    ]
+    if len(first_delta) == 0 or len(second_delta) == 0:
+        raise ValueError("The dataset needs at least three consecutive frames in one episode.")
+    return (
+        np.percentile(np.abs(first_delta), percentile, axis=0),
+        np.percentile(np.abs(second_delta), percentile, axis=0),
+    )
+
+
+def make_action_postprocessor(
+    initial_action: torch.Tensor,
+    joint_indices: tuple[int, ...],
+    max_delta: np.ndarray | None,
+    max_second_delta: np.ndarray | None,
+    blend_steps: int,
+    gripper_latch_config: GripperLatchConfig | None,
+) -> CausalActionPostprocessor:
+    blender = None
+    if blend_steps:
+        blender = CausalChunkBoundaryBlender(
+            ChunkBoundaryBlendConfig(joint_indices, blend_steps=blend_steps)
+        )
+    limiter = None
+    if max_delta is not None:
+        limiter = CausalJointRateLimiter(
+            JointRateLimitConfig(
+                joint_indices,
+                tuple(float(value) for value in max_delta),
+                None
+                if max_second_delta is None
+                else tuple(float(value) for value in max_second_delta),
+            )
+        )
+    latch = GripperIntentLatch(gripper_latch_config) if gripper_latch_config else None
+    return CausalActionPostprocessor(
+        initial_action,
+        boundary_blender=blender,
+        rate_limiter=limiter,
+        gripper_latch=latch,
+    )
+
+
 def read_raw_gt_chunk(dataset, relative_frame: int, horizon: int) -> torch.Tensor:
     """Read GT actions directly from parquet rows, bypassing delta-query padding."""
 
@@ -459,6 +543,11 @@ def build_episode_timeline(
     inference_stride: int,
     aggregation: str,
     augment_kwargs: dict,
+    joint_indices: tuple[int, ...] = (),
+    max_delta: np.ndarray | None = None,
+    max_second_delta: np.ndarray | None = None,
+    blend_steps: int = 0,
+    gripper_latch_config: GripperLatchConfig | None = None,
 ) -> dict:
     """Run independent chunk predictions over ground-truth episode observations."""
     frame_count = min(frame_limit, len(dataset))
@@ -469,10 +558,24 @@ def build_episode_timeline(
     action_dim = first_gt.shape[-1]
     gt = np.full((frame_count, action_dim), np.nan, dtype=np.float32)
     pred_sum = np.zeros((frame_count, action_dim), dtype=np.float64)
+    raw_pred_sum = np.zeros((frame_count, action_dim), dtype=np.float64)
     pred_count = np.zeros(frame_count, dtype=np.int32)
     inference_frames: list[int] = []
     inference_ms: list[float] = []
     depth_keys = get_depth_keys(policy)
+    postprocessing_requested = bool(
+        max_delta is not None or blend_steps or gripper_latch_config is not None
+    )
+    persistent_pipeline = make_action_postprocessor(
+        current_action_state(dataset[0], action_dim)
+        if postprocessing_requested
+        else torch.zeros(action_dim),
+        joint_indices,
+        max_delta,
+        max_second_delta,
+        blend_steps,
+        gripper_latch_config,
+    )
 
     for frame in range(frame_count):
         gt[frame] = read_raw_gt_chunk(dataset, frame, 1)[0].numpy()
@@ -506,18 +609,38 @@ def build_episode_timeline(
             raise ValueError(
                 f"Predicted action dimension {chunk.shape[-1]} does not match GT {action_dim}."
             )
-        usable = min(chunk.shape[0], frame_count - frame)
+        raw_chunk = chunk.detach().cpu().float()
+        usable = min(raw_chunk.shape[0], frame_count - frame)
         if aggregation == "Execute prefix":
             usable = min(usable, inference_stride)
-        pred_sum[frame : frame + usable] += chunk[:usable].numpy()
+            pipeline = persistent_pipeline
+        else:
+            pipeline = make_action_postprocessor(
+                current_action_state(sample, action_dim)
+                if postprocessing_requested
+                else torch.zeros(action_dim),
+                joint_indices,
+                max_delta,
+                max_second_delta,
+                blend_steps,
+                gripper_latch_config,
+            )
+        processed_chunk = pipeline.process_chunk(raw_chunk[:usable])
+        pred_sum[frame : frame + usable] += processed_chunk.numpy()
+        raw_pred_sum[frame : frame + usable] += raw_chunk[:usable].numpy()
         pred_count[frame : frame + usable] += 1
 
     pred = np.full((frame_count, action_dim), np.nan, dtype=np.float32)
+    raw_pred = np.full((frame_count, action_dim), np.nan, dtype=np.float32)
     covered = pred_count > 0
     pred[covered] = (pred_sum[covered] / pred_count[covered, None]).astype(np.float32)
+    raw_pred[covered] = (raw_pred_sum[covered] / pred_count[covered, None]).astype(np.float32)
     return {
         "gt": gt,
         "pred": pred,
+        "raw_pred": raw_pred,
+        "postprocessing_enabled": persistent_pipeline.enabled,
+        "joint_indices": np.asarray(joint_indices, dtype=np.int64),
         "error": pred - gt,
         "covered": covered,
         "inference_frames": np.asarray(inference_frames),
@@ -532,12 +655,22 @@ def render_episode_timeline(result: dict) -> None:
     action_dim = result["gt"].shape[-1]
     dim = st.selectbox("Timeline action dimension", list(range(action_dim)), index=0)
     frames = np.arange(result["gt"].shape[0])
-    values = pd.DataFrame(
-        {
-            "frame": np.concatenate([frames, frames]),
-            "series": ["GT"] * len(frames) + ["Pred"] * len(frames),
-            "value": np.concatenate([result["gt"][:, dim], result["pred"][:, dim]]),
-        }
+    series = [("GT", result["gt"][:, dim])]
+    if result.get("postprocessing_enabled"):
+        series.extend(
+            [
+                ("Raw Pred", result["raw_pred"][:, dim]),
+                ("Postprocessed", result["pred"][:, dim]),
+            ]
+        )
+    else:
+        series.append(("Pred", result["pred"][:, dim]))
+    values = pd.concat(
+        [
+            pd.DataFrame({"frame": frames, "series": name, "value": values})
+            for name, values in series
+        ],
+        ignore_index=True,
     )
     lines = (
         alt.Chart(values)
@@ -547,7 +680,10 @@ def render_episode_timeline(result: dict) -> None:
             y=alt.Y("value:Q", title=f"Action dimension {dim}"),
             color=alt.Color(
                 "series:N",
-                scale=alt.Scale(domain=["GT", "Pred"], range=["#6b7280", "#16a34a"]),
+                scale=alt.Scale(
+                    domain=["GT", "Pred", "Raw Pred", "Postprocessed"],
+                    range=["#6b7280", "#16a34a", "#dc2626", "#2563eb"],
+                ),
             ),
             tooltip=["frame:Q", "series:N", alt.Tooltip("value:Q", format=".5f")],
         )
@@ -565,12 +701,17 @@ def render_episode_timeline(result: dict) -> None:
 
     valid_error = result["error"][result["covered"]]
     latency = result["inference_ms"]
-    cols = st.columns(5)
+    cols = st.columns(6 if result.get("postprocessing_enabled") else 5)
     cols[0].metric("Covered", f"{result['covered'].mean() * 100:.1f}%")
-    cols[1].metric("Timeline MAE", f"{np.nanmean(np.abs(valid_error)):.6f}")
-    cols[2].metric("Timeline RMSE", f"{np.sqrt(np.nanmean(valid_error ** 2)):.6f}")
-    cols[3].metric("Mean inference", f"{latency.mean():.1f} ms")
-    cols[4].metric("P95 inference", f"{np.percentile(latency, 95):.1f} ms")
+    metric_offset = 1
+    if result.get("postprocessing_enabled"):
+        raw_error = (result["raw_pred"] - result["gt"])[result["covered"]]
+        cols[1].metric("Raw MAE", f"{np.nanmean(np.abs(raw_error)):.6f}")
+        metric_offset = 2
+    cols[metric_offset].metric("Timeline MAE", f"{np.nanmean(np.abs(valid_error)):.6f}")
+    cols[metric_offset + 1].metric("Timeline RMSE", f"{np.sqrt(np.nanmean(valid_error ** 2)):.6f}")
+    cols[metric_offset + 2].metric("Mean inference", f"{latency.mean():.1f} ms")
+    cols[metric_offset + 3].metric("P95 inference", f"{np.percentile(latency, 95):.1f} ms")
 
 
 def main() -> None:
@@ -673,6 +814,16 @@ def main() -> None:
         video_backend,
     )
     max_frame = max(0, len(dataset) - 1)
+    action_dim = int(read_raw_gt_chunk(dataset, 0, 1).shape[-1])
+    if action_dim == 16:
+        default_gripper_indices = "7,15"
+        default_joint_indices = ",".join(str(index) for index in range(16) if index not in (7, 15))
+    elif action_dim == 8:
+        default_gripper_indices = "7"
+        default_joint_indices = ",".join(str(index) for index in range(7))
+    else:
+        default_gripper_indices = ""
+        default_joint_indices = ",".join(str(index) for index in range(action_dim))
     with st.sidebar:
         frame = st.slider("Frame in selected episode", min_value=0, max_value=max_frame, value=0, step=1)
         max_compare_h = int(getattr(policy.config, "chunk_size", getattr(policy.config, "horizon", 1)))
@@ -690,6 +841,86 @@ def main() -> None:
         timeline_aggregation = st.selectbox(
             "Chunk timeline mode", ["Execute prefix", "Overlap mean"], index=0
         )
+        st.divider()
+        st.subheader("Causal action postprocessing")
+        joint_indices_text = st.text_input("Arm/joint action dimensions", default_joint_indices)
+        enable_rate_limit = st.checkbox("Dataset-derived joint rate limit", value=False)
+        rate_percentile = st.slider(
+            "Dataset |Δaction| percentile",
+            95.0,
+            99.9,
+            99.5,
+            0.1,
+            disabled=not enable_rate_limit,
+        )
+        enable_acceleration_limit = st.checkbox(
+            "Also limit second difference",
+            value=False,
+            disabled=not enable_rate_limit,
+        )
+        enable_boundary_blend = st.checkbox("Blend new chunk prefix", value=False)
+        boundary_blend_steps = st.number_input(
+            "Chunk prefix blend steps",
+            min_value=1,
+            max_value=max(1, max_compare_h),
+            value=min(4, max(1, max_compare_h)),
+            disabled=not enable_boundary_blend,
+        )
+        enable_gripper_latch = st.checkbox("Latch gripper intent", value=False)
+        gripper_indices_text = st.text_input(
+            "Gripper action dimensions",
+            default_gripper_indices,
+            disabled=not enable_gripper_latch,
+        )
+        intent_steps = st.number_input(
+            "Consecutive intent steps",
+            min_value=1,
+            value=5,
+            disabled=not enable_gripper_latch,
+        )
+        min_close_steps = st.number_input(
+            "Minimum closed hold steps",
+            min_value=0,
+            value=10,
+            disabled=not enable_gripper_latch,
+        )
+        min_open_steps = st.number_input(
+            "Minimum open hold steps",
+            min_value=0,
+            value=4,
+            disabled=not enable_gripper_latch,
+        )
+
+    joint_indices: tuple[int, ...] = ()
+    if enable_rate_limit or enable_boundary_blend:
+        try:
+            joint_indices = parse_action_indices(joint_indices_text)
+        except ValueError as exc:
+            st.error(str(exc))
+            st.stop()
+    max_delta = max_second_delta = None
+    if enable_rate_limit:
+        try:
+            max_delta, dataset_second_delta = compute_dataset_action_limits(
+                dataset, joint_indices, float(rate_percentile)
+            )
+            if enable_acceleration_limit:
+                max_second_delta = dataset_second_delta
+        except (ValueError, IndexError) as exc:
+            st.error(str(exc))
+            st.stop()
+    gripper_latch_config = None
+    if enable_gripper_latch:
+        try:
+            gripper_latch_config = GripperLatchConfig(
+                action_indices=parse_action_indices(gripper_indices_text),
+                intent_steps=int(intent_steps),
+                min_close_steps=int(min_close_steps),
+                min_open_steps=int(min_open_steps),
+            )
+        except ValueError as exc:
+            st.error(str(exc))
+            st.stop()
 
     idx = min(int(frame), len(dataset) - 1)
     sample = dataset[idx]
@@ -720,7 +951,30 @@ def main() -> None:
         if is_depth_key(key) or key in depth_keys:
             preview_sample[key] = normalize_depth_tensor(preview_sample[key])
 
-    pred = predict_actions(policy, preprocessor, postprocessor, preview_sample, task, predict_mode, policy_type)
+    raw_pred = predict_actions(
+        policy, preprocessor, postprocessor, preview_sample, task, predict_mode, policy_type
+    )
+    postprocessing_requested = bool(
+        max_delta is not None
+        or enable_boundary_blend
+        or gripper_latch_config is not None
+    )
+    try:
+        action_postprocessor = make_action_postprocessor(
+            current_action_state(sample, raw_pred.shape[-1])
+            if postprocessing_requested
+            else torch.zeros(raw_pred.shape[-1]),
+            joint_indices,
+            max_delta,
+            max_second_delta,
+            int(boundary_blend_steps) if enable_boundary_blend else 0,
+            gripper_latch_config,
+        )
+        pred = action_postprocessor.process_chunk(raw_pred)
+    except ValueError as exc:
+        st.error(str(exc))
+        st.stop()
+    postprocessing_enabled = action_postprocessor.enabled
     gt = read_raw_gt_chunk(dataset, idx, pred.shape[0])
     if pred.shape[-1] != gt.shape[-1]:
         st.error("Predicted action dimension does not match dataset action dimension.")
@@ -750,7 +1004,8 @@ def main() -> None:
     first = pd.DataFrame(
         {
             "dim": list(range(pred.shape[-1])),
-            "pred": pred[0].numpy(),
+            **({"raw_pred": raw_pred[0].numpy()} if postprocessing_enabled else {}),
+            "postprocessed" if postprocessing_enabled else "pred": pred[0].numpy(),
             "gt": gt[0].numpy(),
             "err": (pred[0] - gt[0]).numpy(),
             "abs_err": (pred[0] - gt[0]).abs().numpy(),
@@ -796,6 +1051,12 @@ def main() -> None:
         bool(use_compile),
         int(timeline_frames),
         int(inference_stride),
+        timeline_aggregation,
+        tuple(joint_indices),
+        None if max_delta is None else tuple(np.round(max_delta, 8)),
+        None if max_second_delta is None else tuple(np.round(max_second_delta, 8)),
+        int(boundary_blend_steps) if enable_boundary_blend else 0,
+        repr(gripper_latch_config),
     )
     if st.button("Run episode timeline", type="primary"):
         with st.spinner("Running chunk inference over the selected episode..."):
@@ -819,6 +1080,11 @@ def main() -> None:
                         "center_ratio": center_crop,
                         "manual_box": manual_box,
                     },
+                    joint_indices=joint_indices,
+                    max_delta=max_delta,
+                    max_second_delta=max_second_delta,
+                    blend_steps=int(boundary_blend_steps) if enable_boundary_blend else 0,
+                    gripper_latch_config=gripper_latch_config,
                 ),
             }
     cached_timeline = st.session_state.get("episode_timeline")
