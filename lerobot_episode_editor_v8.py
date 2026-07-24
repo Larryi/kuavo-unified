@@ -1,5 +1,5 @@
-"""
-LeRobot Episode Editor / Trimmer
+r"""
+LeRobot Episode Editor / Trimmer v10
 
 A lightweight local Streamlit tool for visually inspecting LeRobot v3 datasets,
 marking per-episode trim ranges, and exporting a new trimmed dataset.
@@ -913,6 +913,266 @@ def suggest_trim(metrics: pd.DataFrame, column: str, threshold: float, margin: i
     return start, end
 
 
+
+@st.cache_data(show_spinner=False)
+def compute_all_action_trim_suggestions(
+    root_str: str,
+    metric_column: str,
+    threshold: float,
+    margin: int,
+) -> pd.DataFrame:
+    """Compute suggested action-active trim ranges for all episodes from parquet only.
+
+    This is much faster than calling LeRobotDataset.__getitem__ for every frame,
+    because the latter may decode camera frames. Here we only read low-dimensional
+    action values from data/chunk-*/file-*.parquet.
+    """
+    root = Path(root_str)
+    files = sorted((root / "data").glob("chunk-*/*.parquet"))
+    if not files:
+        raise FileNotFoundError(f"No parquet files found under {root / 'data'}")
+
+    parts = []
+    cumulative = 0
+    for f in files:
+        # IMPORTANT:
+        # Some LeRobot parquet files store vector columns such as "action" as
+        # nested Arrow / Parquet columns. In that case,
+        # ParquetFile(...).schema.names may expose leaf names rather than the
+        # top-level column name "action". Therefore we must inspect the Arrow
+        # schema, or simply attempt to read the top-level column.
+        base_cols = ["index", "episode_index", "frame_index"]
+        wanted = ["action"]
+
+        if pq is not None:
+            try:
+                arrow_names = list(pq.ParquetFile(f).schema_arrow.names)
+            except Exception:
+                arrow_names = []
+
+            for c in base_cols:
+                if c in arrow_names:
+                    wanted.append(c)
+
+            try:
+                df = pd.read_parquet(f, columns=wanted)
+            except Exception as exc:
+                # Fallback: read full parquet so we can show the real top-level
+                # columns in the error message. This is slower, but only used
+                # when selective nested-column reading fails.
+                df_full = pd.read_parquet(f)
+                if "action" not in df_full.columns:
+                    raise KeyError(
+                        f"No top-level 'action' column in {f}. "
+                        f"Top-level pandas columns: {list(df_full.columns)}. "
+                        f"Arrow schema names: {arrow_names}. Original error: {exc}"
+                    )
+                keep = [c for c in ["index", "episode_index", "frame_index", "action"] if c in df_full.columns]
+                df = df_full[keep]
+        else:
+            df_full = pd.read_parquet(f)
+            if "action" not in df_full.columns:
+                raise KeyError(f"No top-level 'action' column in {f}. Columns: {list(df_full.columns)}")
+            keep = [c for c in ["index", "episode_index", "frame_index", "action"] if c in df_full.columns]
+            df = df_full[keep]
+
+        if "episode_index" not in df.columns:
+            raise KeyError(f"No episode_index column in {f}. Columns: {list(df.columns)}")
+        if "index" in df.columns:
+            df["_global_index"] = df["index"].astype(int)
+        else:
+            df["_global_index"] = np.arange(cumulative, cumulative + len(df), dtype=int)
+        cumulative += len(df)
+        parts.append(df)
+
+    full = pd.concat(parts, ignore_index=True)
+    sort_cols = [c for c in ["episode_index", "frame_index", "_global_index"] if c in full.columns]
+    full = full.sort_values(sort_cols).reset_index(drop=True)
+
+    rows = []
+    for ep_idx, g in full.groupby("episode_index", sort=True):
+        actions = []
+        for a in g["action"].to_list():
+            arr = np.asarray(a, dtype=float).reshape(-1)
+            actions.append(arr)
+
+        n = len(actions)
+        if n == 0:
+            rows.append(
+                {
+                    "episode_index": int(ep_idx),
+                    "num_frames": 0,
+                    "suggested_start": 0,
+                    "suggested_end": 0,
+                    "suggested_frames": 0,
+                    "active_frames": 0,
+                    "has_active_action": False,
+                    "max_action_l2": np.nan,
+                    "max_action_mean_abs": np.nan,
+                    "max_action_delta_l2": np.nan,
+                }
+            )
+            continue
+
+        l2_vals = np.empty(n, dtype=float)
+        mean_abs_vals = np.empty(n, dtype=float)
+        delta_vals = np.empty(n, dtype=float)
+        prev = None
+        for i, arr in enumerate(actions):
+            if arr.size == 0:
+                l2_vals[i] = np.nan
+                mean_abs_vals[i] = np.nan
+                delta_vals[i] = np.nan
+                continue
+            l2_vals[i] = float(np.linalg.norm(arr))
+            mean_abs_vals[i] = float(np.mean(np.abs(arr)))
+            if prev is None or prev.shape != arr.shape:
+                delta_vals[i] = 0.0
+            else:
+                delta_vals[i] = float(np.linalg.norm(arr - prev))
+            prev = arr
+
+        metric_map = {
+            "action_l2": l2_vals,
+            "action_mean_abs": mean_abs_vals,
+            "action_delta_l2": delta_vals,
+        }
+        vals = metric_map.get(metric_column)
+        if vals is None:
+            vals = delta_vals
+
+        active = np.isfinite(vals) & (vals > float(threshold))
+        if active.any():
+            active_indices = np.flatnonzero(active)
+            suggested_start = max(0, int(active_indices[0]) - int(margin))
+            suggested_end = min(n, int(active_indices[-1]) + 1 + int(margin))
+        else:
+            suggested_start, suggested_end = 0, n
+
+        rows.append(
+            {
+                "episode_index": int(ep_idx),
+                "num_frames": int(n),
+                "suggested_start": int(suggested_start),
+                "suggested_end": int(suggested_end),
+                "suggested_frames": int(max(0, suggested_end - suggested_start)),
+                "active_frames": int(active.sum()),
+                "has_active_action": bool(active.any()),
+                "max_action_l2": float(np.nanmax(l2_vals)) if np.isfinite(l2_vals).any() else np.nan,
+                "max_action_mean_abs": float(np.nanmax(mean_abs_vals)) if np.isfinite(mean_abs_vals).any() else np.nan,
+                "max_action_delta_l2": float(np.nanmax(delta_vals)) if np.isfinite(delta_vals).any() else np.nan,
+            }
+        )
+
+    return pd.DataFrame(rows).sort_values("episode_index").reset_index(drop=True)
+
+
+def build_auto_trim_plan(
+    episode_table: pd.DataFrame,
+    trim_config: dict[str, dict[str, Any]],
+    suggestions: pd.DataFrame,
+    *,
+    include_dropped: bool,
+    no_activity_behavior: str,
+    never_expand_existing: bool,
+) -> pd.DataFrame:
+    """Create a per-episode auto-trim preview and summary table."""
+    suggestion_map = {int(r["episode_index"]): r for _, r in suggestions.iterrows()}
+    rows = []
+    for _, ep_row in episode_table.iterrows():
+        ep = int(ep_row["episode_index"])
+        raw_frames = int(ep_row["num_frames"])
+        cfg = trim_config.get(str(ep), {"start": 0, "end": raw_frames, "drop": False})
+        is_dropped = bool(cfg.get("drop", False))
+        before_start = int(cfg.get("start", 0))
+        before_end = int(cfg.get("end", raw_frames))
+        before_start = max(0, min(raw_frames, before_start))
+        before_end = max(before_start, min(raw_frames, before_end))
+        before_frames = 0 if is_dropped else max(0, before_end - before_start)
+
+        sugg = suggestion_map.get(ep)
+        if sugg is None:
+            suggested_start, suggested_end = 0, raw_frames
+            active_frames = 0
+            has_active = False
+        else:
+            suggested_start = int(sugg["suggested_start"])
+            suggested_end = int(sugg["suggested_end"])
+            active_frames = int(sugg.get("active_frames", 0))
+            has_active = bool(sugg.get("has_active_action", False))
+
+        action = "trim"
+        new_drop = is_dropped
+        if is_dropped and not include_dropped:
+            new_start, new_end = before_start, before_end
+            action = "skip_dropped"
+        elif not has_active:
+            if no_activity_behavior == "drop":
+                new_start, new_end = before_start, before_end
+                new_drop = True
+                action = "drop_no_active"
+            elif no_activity_behavior == "empty_keep_one":
+                new_start, new_end = 0, min(1, raw_frames)
+                action = "keep_one_no_active"
+            else:
+                new_start, new_end = before_start, before_end
+                action = "keep_no_active"
+        else:
+            new_start, new_end = suggested_start, suggested_end
+            if never_expand_existing:
+                new_start = max(before_start, new_start)
+                new_end = min(before_end, new_end)
+                if new_end <= new_start:
+                    # Fall back to suggested range if the current manual trim was incompatible.
+                    new_start, new_end = suggested_start, suggested_end
+                    action = "trim_reset_to_suggestion"
+                else:
+                    action = "trim_intersect_existing"
+
+        new_start = max(0, min(raw_frames, int(new_start)))
+        new_end = max(new_start, min(raw_frames, int(new_end)))
+        after_frames = 0 if new_drop else max(0, new_end - new_start)
+        saved_vs_raw = raw_frames - after_frames
+        saved_vs_current = before_frames - after_frames
+
+        rows.append(
+            {
+                "episode_index": ep,
+                "drop_before": is_dropped,
+                "drop_after": new_drop,
+                "raw_frames": raw_frames,
+                "before_start": before_start,
+                "before_end": before_end,
+                "before_frames": before_frames,
+                "suggested_start": suggested_start,
+                "suggested_end": suggested_end,
+                "suggested_frames": max(0, suggested_end - suggested_start),
+                "active_frames": active_frames,
+                "has_active_action": has_active,
+                "new_start": new_start,
+                "new_end": new_end,
+                "after_frames": after_frames,
+                "saved_vs_raw": saved_vs_raw,
+                "saved_vs_current": saved_vs_current,
+                "action": action,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def apply_auto_trim_plan(trim_config: dict[str, dict[str, Any]], plan: pd.DataFrame) -> None:
+    for _, row in plan.iterrows():
+        ep = int(row["episode_index"])
+        key = str(ep)
+        if key not in trim_config:
+            trim_config[key] = {"start": 0, "end": int(row["raw_frames"]), "drop": False}
+        # skip_dropped means leave it as-is unless the plan explicitly includes a drop_after state.
+        if row["action"] == "skip_dropped":
+            continue
+        trim_config[key]["start"] = int(row["new_start"])
+        trim_config[key]["end"] = int(row["new_end"])
+        trim_config[key]["drop"] = bool(row["drop_after"])
+
 def plot_metrics(metrics: pd.DataFrame, trim_start: int, trim_end: int, current_frame: int, y_col: str):
     if plt is None:
         st.error(f"matplotlib import failed: {_MATPLOTLIB_IMPORT_ERROR}")
@@ -1163,7 +1423,7 @@ def export_trimmed_dataset(
 
 st.set_page_config(page_title="LeRobot Episode Editor", layout="wide")
 
-st.title("LeRobot Episode Editor / Trimmer v8")
+st.title("LeRobot Episode Editor / Trimmer v10")
 st.caption("Visual inspect episodes, mark trim ranges, and export a new trimmed LeRobot dataset. The source dataset is never modified.")
 
 with st.sidebar:
@@ -1289,6 +1549,144 @@ with st.expander("Ignored / orphan episodes before grouping", expanded=False):
 dataset_fps = get_dataset_fps(ds, src_root)
 length_table = build_length_table(episode_table, dataset_fps, st.session_state.trim_config)
 episode_groups = make_episode_groups(episode_table, int(group_size), st.session_state.trim_config, bool(regroup_after_drops))
+
+with st.expander("Batch auto-trim inactive action segments", expanded=False):
+    st.caption(
+        "Compute action-activity boundaries for every episode using parquet action data only, then apply the suggested ranges in one click. "
+        "This is meant to remove long idle prefixes/suffixes while preserving the source dataset until export."
+    )
+    bcol1, bcol2, bcol3, bcol4 = st.columns(4)
+    with bcol1:
+        batch_metric_col = st.selectbox(
+            "Batch activity metric",
+            ["action_delta_l2", "action_mean_abs", "action_l2"],
+            index=["action_delta_l2", "action_mean_abs", "action_l2"].index(metric_col),
+            help="action_delta_l2 is usually best for absolute joint-position actions, because idle segments often have nearly constant actions rather than zero actions.",
+        )
+    with bcol2:
+        batch_threshold = st.number_input(
+            "Batch threshold",
+            min_value=0.0,
+            value=float(threshold),
+            step=0.001,
+            format="%.6f",
+        )
+    with bcol3:
+        batch_margin = st.number_input("Batch margin frames", min_value=0, value=int(margin), step=1)
+    with bcol4:
+        no_activity_behavior = st.selectbox(
+            "If no active action",
+            ["keep", "drop", "empty_keep_one"],
+            index=0,
+            format_func=lambda x: {
+                "keep": "Keep unchanged",
+                "drop": "Drop episode",
+                "empty_keep_one": "Keep 1 frame",
+            }[x],
+        )
+
+    opt1, opt2 = st.columns(2)
+    with opt1:
+        batch_include_dropped = st.checkbox("Include already-dropped episodes", value=False)
+    with opt2:
+        never_expand_existing = st.checkbox(
+            "Never expand existing manual trims",
+            value=True,
+            help="When enabled, batch auto-trim intersects with existing manual trim ranges instead of expanding them.",
+        )
+
+    if st.button("Compute auto-trim preview", use_container_width=True):
+        with st.spinner("Reading parquet action columns and computing suggestions..."):
+            suggestions = compute_all_action_trim_suggestions(
+                str(src_root),
+                str(batch_metric_col),
+                float(batch_threshold),
+                int(batch_margin),
+            )
+            plan = build_auto_trim_plan(
+                episode_table,
+                st.session_state.trim_config,
+                suggestions,
+                include_dropped=bool(batch_include_dropped),
+                no_activity_behavior=str(no_activity_behavior),
+                never_expand_existing=bool(never_expand_existing),
+            )
+            st.session_state.auto_trim_plan = plan.to_dict(orient="records")
+            st.session_state.auto_trim_params = {
+                "metric": str(batch_metric_col),
+                "threshold": float(batch_threshold),
+                "margin": int(batch_margin),
+                "include_dropped": bool(batch_include_dropped),
+                "no_activity_behavior": str(no_activity_behavior),
+                "never_expand_existing": bool(never_expand_existing),
+            }
+        st.success("Auto-trim preview computed.")
+
+    if st.session_state.get("auto_trim_plan"):
+        plan = pd.DataFrame(st.session_state.auto_trim_plan)
+        total_raw = int(plan["raw_frames"].sum())
+        total_before = int(plan["before_frames"].sum())
+        total_after = int(plan["after_frames"].sum())
+        saved_vs_raw = int(plan["saved_vs_raw"].sum())
+        saved_vs_current = int(plan["saved_vs_current"].sum())
+        changed = int(((plan["before_start"] != plan["new_start"]) | (plan["before_end"] != plan["new_end"]) | (plan["drop_before"] != plan["drop_after"])).sum())
+        no_active_count = int((~plan["has_active_action"].astype(bool)).sum())
+
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("Episodes planned", len(plan))
+        m2.metric("Changed episodes", changed)
+        m3.metric("Frames now kept", f"{total_before:,}")
+        m4.metric("Frames after trim", f"{total_after:,}")
+        m5.metric("Saved vs current", f"{saved_vs_current:,}")
+
+        if total_before > 0:
+            st.progress(min(1.0, max(0.0, saved_vs_current / total_before)), text=f"Would save {saved_vs_current:,} / {total_before:,} currently-kept frames ({saved_vs_current / total_before:.1%}).")
+        if total_raw > 0:
+            st.caption(f"Saved vs raw dataset: {saved_vs_raw:,} / {total_raw:,} frames ({saved_vs_raw / total_raw:.1%}). Episodes with no active action under current threshold: {no_active_count}.")
+
+        preview_cols = [
+            "episode_index", "raw_frames", "before_start", "before_end", "before_frames",
+            "suggested_start", "suggested_end", "new_start", "new_end", "after_frames",
+            "saved_vs_current", "active_frames", "has_active_action", "action",
+        ]
+        st.dataframe(
+            plan[preview_cols].sort_values("saved_vs_current", ascending=False),
+            use_container_width=True,
+            hide_index=True,
+            height=300,
+        )
+
+        a1, a2, a3 = st.columns(3)
+        with a1:
+            if st.button("Apply auto-trim plan", type="primary", use_container_width=True):
+                apply_auto_trim_plan(st.session_state.trim_config, plan)
+                st.session_state.last_auto_trim_summary = {
+                    "changed_episodes": changed,
+                    "total_raw_frames": total_raw,
+                    "before_frames": total_before,
+                    "after_frames": total_after,
+                    "saved_vs_current": saved_vs_current,
+                    "saved_vs_raw": saved_vs_raw,
+                    "params": st.session_state.get("auto_trim_params", {}),
+                }
+                st.success(f"Applied auto-trim: saved {saved_vs_current:,} currently-kept frames across {changed} changed episodes.")
+                st.rerun()
+        with a2:
+            if st.button("Save auto_trim_plan.csv", use_container_width=True):
+                out_csv = src_root / "auto_trim_plan.csv"
+                plan.to_csv(out_csv, index=False)
+                st.success(f"Saved: {out_csv}")
+        with a3:
+            if st.button("Clear auto-trim preview", use_container_width=True):
+                st.session_state.auto_trim_plan = []
+                st.rerun()
+
+    if st.session_state.get("last_auto_trim_summary"):
+        s = st.session_state.last_auto_trim_summary
+        st.info(
+            f"Last applied auto-trim saved {s['saved_vs_current']:,} currently-kept frames "
+            f"({s['before_frames']:,} → {s['after_frames']:,}) across {s['changed_episodes']} changed episodes."
+        )
 
 with st.expander("Group contact sheet / orphan episode review", expanded=True):
     st.caption(
