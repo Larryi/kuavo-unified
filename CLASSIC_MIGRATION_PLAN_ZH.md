@@ -271,6 +271,12 @@ G 阶段验收：
   API 与旧 trainer 的不兼容，四卡配置解析、checkpoint 完整性清理
   fixture 和 exporter dry-run 已通过。尚未在 CUDA 云实例执行真实
   norm 计算、FSDP2 训练、导出和上传，Gate G 为“部分通过”。
+- 另有一项已确认的部署阻塞：固定 LingBot-v1 已将服务入口更新为
+  `deploy.lingbot_vla_policy`，而 unified 的
+  `kuavo_deploy/utils/lingbot_adapter.py` 仍引用已不存在的
+  `deploy.lingbot_robotwin_policy`。在 adapter 迁移到新
+  `FeatureTransform`/server API 并通过 checkpoint 实机 smoke 前，
+  LingBot-v1 部署链路不可标记为可用。
 
 因此当前分支适合作为可复现的继续集成基线，但还不是最终训练/部署
 交付版本。
