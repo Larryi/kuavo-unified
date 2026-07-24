@@ -2,6 +2,7 @@ import json
 from copy import deepcopy
 import os
 import re
+import shutil
 import sys
 import time
 from dataclasses import asdict, dataclass, field
@@ -36,7 +37,18 @@ from lingbotvla.data import (
     VLADataCollatorWithPacking,
     build_dataloader,
 )
-from lingbotvla.data.vla_data import liberoDataset, RobotwinDataset, CustomizedRobotwinDataset
+try:
+    from lingbotvla.data.vla_data import VLADataset
+except ImportError:  # Legacy LingBot-v1 checkout.
+    VLADataset = None
+try:
+    from lingbotvla.data.vla_data import (
+        CustomizedRobotwinDataset,
+        RobotwinDataset,
+        liberoDataset,
+    )
+except ImportError:  # Current LingBot-v1 exposes the unified VLADataset.
+    CustomizedRobotwinDataset = RobotwinDataset = liberoDataset = None
 from lingbotvla.data.vla_data.transform import Normalizer, prepare_action, prepare_images, prepare_language, prepare_state
 from lingbotvla.distributed.offloading import build_activation_offloading_context
 from lingbotvla.distributed.parallel_state import get_parallel_state, init_parallel_state
@@ -44,7 +56,15 @@ from lingbotvla.distributed.torch_parallelize import build_parallelize_model
 from lingbotvla.models import build_foundation_model, build_processor, save_model_assets, save_model_weights, build_tokenizer
 from lingbotvla.optim import build_lr_scheduler, build_optimizer
 from lingbotvla.utils import helper
-from lingbotvla.utils.ema import ema_update
+try:
+    from lingbotvla.utils.ema import ema_update
+except ImportError:
+    @torch.no_grad()
+    def ema_update(ema_model, model, decay):
+        """Compatibility fallback for LingBot-v1 revisions without utils.ema."""
+        ema_parameters = dict(ema_model.named_parameters())
+        for name, parameter in model.named_parameters():
+            ema_parameters[name].mul_(decay).add_(parameter, alpha=1.0 - decay)
 from lingbotvla.utils.arguments import DataArguments, ModelArguments, TrainingArguments, parse_args, save_args
 from lingbotvla.utils.dist_utils import all_reduce
 
@@ -260,11 +280,18 @@ def _patch_lerobot_task_lookup() -> None:
         patched_init._kuavo_task_patch_applied = True
         dataset_cls.__init__ = patched_init
 
-    for dataset_cls in (liberoDataset, RobotwinDataset, CustomizedRobotwinDataset):
+    legacy_dataset_classes = tuple(
+        dataset_cls
+        for dataset_cls in (liberoDataset, RobotwinDataset, CustomizedRobotwinDataset)
+        if dataset_cls is not None
+    )
+    for dataset_cls in legacy_dataset_classes:
         _wrap_init(dataset_cls)
 
-    RobotwinDataset.getdata = _generic_robot_dataset_getdata
-    CustomizedRobotwinDataset.getdata = _generic_robot_dataset_getdata
+    if RobotwinDataset is not None:
+        RobotwinDataset.getdata = _generic_robot_dataset_getdata
+    if CustomizedRobotwinDataset is not None:
+        CustomizedRobotwinDataset.getdata = _generic_robot_dataset_getdata
 
 
 _patch_lerobot_task_lookup()
@@ -282,6 +309,10 @@ def get_param_groups(model: "torch.nn.Module", default_lr: float, vit_lr: float)
 
 @dataclass
 class MyTrainingArguments(TrainingArguments):
+    keep_last_checkpoints: int = field(
+        default=0,
+        metadata={"help": "Keep only the newest N complete checkpoints; 0 disables pruning."},
+    )
     freeze_vit: bool = field(
         default=False,
         metadata={"help": "Whether or not to freeze the vit parameters."},
@@ -447,6 +478,39 @@ class Arguments:
     train: "MyTrainingArguments" = field(default_factory=MyTrainingArguments)
 
 
+def _checkpoint_step(path: Path) -> int:
+    match = re.fullmatch(r"global_step_(\d+)", path.name)
+    return int(match.group(1)) if match else -1
+
+
+def _checkpoint_is_complete(path: Path, world_size: int) -> bool:
+    return (
+        (path / "model" / ".metadata").is_file()
+        and (path / "optimizer" / ".metadata").is_file()
+        and all(
+            (path / "extra_state" / f"extra_state_rank_{rank}.pt").is_file()
+            for rank in range(world_size)
+        )
+    )
+
+
+def _prune_old_checkpoints(checkpoint_root: str, keep: int, world_size: int) -> None:
+    if keep <= 0:
+        return
+    root = Path(checkpoint_root)
+    complete = sorted(
+        (
+            path
+            for path in root.glob("global_step_*")
+            if _checkpoint_is_complete(path, world_size)
+        ),
+        key=_checkpoint_step,
+    )
+    for stale in complete[:-keep]:
+        shutil.rmtree(stale)
+        logger.info_rank0(f"Removed stale checkpoint after successful replacement: {stale}")
+
+
 def main():
     args = parse_args(Arguments)
     logger.info(f"Process rank: {args.train.global_rank}, world size: {args.train.world_size}")
@@ -549,7 +613,23 @@ def main():
         if args.data.datasets_type == 'vla':
             logger.info_rank0("Start building VLA dataset")
             args.data.chunk_size = args.train.chunk_size
-            if args.data.data_name == 'libero':
+            image_processor = (
+                processor.image_processor
+                if "qwen" in args.model.tokenizer_path.lower()
+                else None
+            )
+            if VLADataset is not None:
+                train_dataset = VLADataset(
+                    repo_id=args.data.train_path,
+                    data_name=args.data.data_name,
+                    robot_config_root=args.data.robot_config_root,
+                    config=model.config,
+                    tokenizer=processor.tokenizer,
+                    data_config=args.data,
+                    image_processor=image_processor,
+                    use_depth_align=use_depth_align,
+                )
+            elif args.data.data_name == 'libero':
                 train_dataset = liberoDataset(repo_id=args.data.train_path, config=model.config, tokenizer=processor.tokenizer, data_config=args.data, image_processor=processor.image_processor if 'qwen' in args.model.tokenizer_path.lower() else None,use_depth_align=use_depth_align)
             elif 'custom' in (args.data.data_name or "").lower():
                 train_dataset = CustomizedRobotwinDataset(repo_id=args.data.train_path, config=model.config, tokenizer=processor.tokenizer, data_config=args.data, image_processor=processor.image_processor if 'qwen' in args.model.tokenizer_path.lower() else None, use_depth_align=use_depth_align)
@@ -942,6 +1022,13 @@ def main():
                             else:
                                 save_model_weights(ema_hf_weights_path, ema_model_state_dict, model_assets=model_assets)
                             logger.info_rank0(f"Huggingface EMA checkpoint saved at {ema_hf_weights_path} successfully!")
+                if args.train.global_rank == 0:
+                    _prune_old_checkpoints(
+                        args.train.save_checkpoint_path,
+                        args.train.keep_last_checkpoints,
+                        args.train.world_size,
+                    )
+                dist.barrier()
 
         data_loader_tqdm.close()
         start_step = 0
@@ -990,6 +1077,49 @@ def main():
                         else:
                             save_model_weights(ema_hf_weights_path, ema_model_state_dict, model_assets=model_assets)
                         logger.info_rank0(f"Huggingface EMA checkpoint saved at {ema_hf_weights_path} successfully!")
+
+            if args.train.global_rank == 0:
+                _prune_old_checkpoints(
+                    args.train.save_checkpoint_path,
+                    args.train.keep_last_checkpoints,
+                    args.train.world_size,
+                )
+            dist.barrier()
+
+    final_checkpoint_path = os.path.join(
+        args.train.save_checkpoint_path, f"global_step_{global_step}"
+    )
+    if _checkpoint_is_complete(Path(final_checkpoint_path), args.train.world_size):
+        save_checkpoint_path = final_checkpoint_path
+    if save_checkpoint_path != final_checkpoint_path:
+        helper.empty_cache()
+        save_checkpoint_path = final_checkpoint_path
+        state = {
+            "model": model,
+            "ema": model_ema,
+            "optimizer": optimizer,
+            "extra_state": {
+                "global_step": global_step,
+                "lr_scheduler": lr_scheduler.state_dict(),
+                "train_dataloader": train_dataloader.state_dict(),
+                "environ_meter": environ_meter.state_dict(),
+                "torch_rng_state": torch.get_rng_state(),
+            },
+        }
+        Checkpointer.save(
+            args.train.save_checkpoint_path, state, global_steps=global_step
+        )
+        dist.barrier()
+        logger.info_rank0(
+            f"Final distributed checkpoint saved at {save_checkpoint_path} successfully!"
+        )
+        if args.train.global_rank == 0:
+            _prune_old_checkpoints(
+                args.train.save_checkpoint_path,
+                args.train.keep_last_checkpoints,
+                args.train.world_size,
+            )
+        dist.barrier()
 
     torch.cuda.synchronize()
     # release memory
