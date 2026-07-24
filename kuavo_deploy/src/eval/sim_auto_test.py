@@ -50,6 +50,7 @@ import threading
 import traceback
 from geometry_msgs.msg import PoseStamped
 from kuavo_deploy.config import KuavoConfig
+from kuavo_deploy.utils.diagnostics import DiagnosticsManager
 from kuavo_deploy.utils.logging_utils import setup_logger
 from kuavo_deploy.kuavo_service.client import PolicyClient
 from lerobot.policies.factory import make_pre_post_processors
@@ -197,7 +198,53 @@ def setup_policy(pretrained_path, policy_type, cfg, device=torch.device("cuda"))
     
     return policy
 
-def run_single_episode(config, policy, preprocessor, postprocessor, episode, output_directory):
+
+def _create_diagnostics(output_directory: Path, config: KuavoConfig, cfg):
+    try:
+        return DiagnosticsManager.from_env(
+            output_directory=output_directory,
+            run_meta={
+                "entrypoint": "sim_auto_test",
+                "task": cfg.task,
+                "method": cfg.method,
+                "timestamp": cfg.timestamp,
+                "epoch": str(cfg.epoch),
+                "env_name": config.env.env_name,
+                "eval_episodes": cfg.eval_episodes,
+                "policy_type": cfg.policy_type,
+            },
+        )
+    except Exception as exc:
+        log_robot.warning(f"Diagnostics disabled: failed to initialize diagnostics manager: {exc}")
+        return None
+
+
+def _finalize_diagnostics_episode(
+    diagnostics,
+    recorder,
+    episode: int,
+    success: bool,
+    steps: int,
+    fps,
+    video_paths=None,
+    extra=None,
+):
+    if diagnostics is None or recorder is None:
+        return
+    try:
+        bundle_path = recorder.finalize(
+            video_paths=video_paths or [],
+            success=success,
+            steps=steps,
+            fps=fps,
+            extra=extra or {},
+        )
+        diagnostics.upload_async(bundle_path, episode=episode, success=success)
+    except Exception:
+        return
+
+
+def run_single_episode(config, policy, preprocessor, postprocessor, episode, output_directory, diagnostics=None):
     """Running a single episode Running a single episode"""
     cfg = config.inference
     seed = cfg.seed
@@ -227,6 +274,16 @@ def run_single_episode(config, policy, preprocessor, postprocessor, episode, out
     # Reset the policy and environments to prepare for rollout
     policy.reset()
     observation, info = env.reset(seed=seed)
+    active_recorder = diagnostics.start_episode(episode, config) if diagnostics is not None else None
+    active_snapshot_uploader = (
+        diagnostics.start_snapshot_uploader(episode, observation, recorder=active_recorder)
+        if diagnostics is not None
+        else None
+    )
+    if active_recorder is not None:
+        active_recorder.log_state(0, observation.get("observation.state"), None)
+    if active_snapshot_uploader is not None:
+        active_snapshot_uploader.submit(observation, step=0, force=True)
     # first_img =  (observation["observation.images.head_cam_h"].squeeze().permute(1,2,0).numpy()*255).astype(np.uint8)
     
     # import cv2
@@ -257,6 +314,18 @@ def run_single_episode(config, policy, preprocessor, postprocessor, episode, out
         # --- Pause support: block here if pause_flag is set ---
         if not check_control_signals():
             log_robot.info("🛑 Stop signal detected, exiting robot arm motion")
+            if active_snapshot_uploader is not None:
+                active_snapshot_uploader.close()
+            _finalize_diagnostics_episode(
+                diagnostics,
+                active_recorder,
+                episode=episode,
+                success=False,
+                steps=step,
+                fps=getattr(env.unwrapped, "ros_rate", 0),
+                video_paths=[],
+                extra={"entrypoint": "sim_auto_test", "partial": True, "stopped": True},
+            )
             return 0
         
         start_time = time.time()
@@ -271,13 +340,24 @@ def run_single_episode(config, policy, preprocessor, postprocessor, episode, out
         average_action_infer_time += action_infer_time - start_time
 
         numpy_action = action.squeeze(0).cpu().numpy()
+        if active_recorder is not None:
+            active_recorder.log_action(step, numpy_action, action_infer_time - start_time)
 
         log_model.info(f"Step {step}: Executing action {numpy_action}")
         observation, reward, terminated, truncated, info = env.step(numpy_action)
+        if active_snapshot_uploader is not None:
+            active_snapshot_uploader.submit(observation, step=step + 1)
 
         exec_time = time.time()
         log_model.debug(f"step {step}: exec time: {exec_time - action_infer_time:.3f}s")
         average_exec_time += exec_time - action_infer_time
+        if active_recorder is not None:
+            active_recorder.log_state(step + 1, observation.get("observation.state"), reward)
+            active_recorder.log_timing(
+                step,
+                action_infer_time_sec=action_infer_time - start_time,
+                exec_time_sec=exec_time - action_infer_time,
+            )
         
         rewards.append(reward)
 
@@ -306,12 +386,14 @@ def run_single_episode(config, policy, preprocessor, postprocessor, episode, out
     log_model.info(f"average step time: {average_step_time / step:.3f}s")
     log_model.info(f"average sleep time: {env.unwrapped.average_sleep_time / step:.3f}s")
     
+    video_paths = []
     for cam in cam_keys:
         temp_dir = frame_temp_dirs[cam]
         frame_files = sorted(temp_dir.glob("frame_*.png"))
         frames = [imageio.imread(str(f)) for f in frame_files]
         output_path = output_directory / f"rollout_{episode}_{cam}.mp4"
         imageio.mimsave(str(output_path), frames, fps=fps)
+        video_paths.append(output_path)
         
 
         for f in frame_files:
@@ -321,6 +403,18 @@ def run_single_episode(config, policy, preprocessor, postprocessor, episode, out
         del frames
 
     success = success_evt.is_set()
+    if active_snapshot_uploader is not None:
+        active_snapshot_uploader.close()
+    _finalize_diagnostics_episode(
+        diagnostics,
+        active_recorder,
+        episode=episode,
+        success=success,
+        steps=step,
+        fps=fps,
+        video_paths=video_paths,
+        extra={"entrypoint": "sim_auto_test", "partial": False},
+    )
     
     env.close()
     run_single_ros_manager.close()
@@ -351,6 +445,13 @@ def kuavo_eval_autotest(config: KuavoConfig):
     pretrained_path = resolve_pretrained_path(cfg)
     output_directory = Path(f"outputs/eval/{task}/{method}/{timestamp}/epoch{epoch}")
     output_directory.mkdir(parents=True, exist_ok=True)
+    diagnostics = _create_diagnostics(output_directory, config, cfg)
+    if diagnostics is not None:
+        try:
+            diagnostics.notify_eval_started()
+            diagnostics.smoke_test_async()
+        except Exception:
+            pass
 
     # Log evaluation results
     log_file_path = output_directory / "evaluation_autotest.log"
@@ -395,7 +496,15 @@ def kuavo_eval_autotest(config: KuavoConfig):
                 return
             time.sleep(1)
         try:
-            result = run_single_episode(config, policy, preprocessor, postprocessor, episode, output_directory)
+            result = run_single_episode(
+                config,
+                policy,
+                preprocessor,
+                postprocessor,
+                episode,
+                output_directory,
+                diagnostics=diagnostics,
+            )
             log_robot.info(f"Episode {episode+1} completed with return code: {result}")
             
             #Reset policy, clear cache Reset policy, clear cache
@@ -448,3 +557,8 @@ def kuavo_eval_autotest(config: KuavoConfig):
     init_service.shutdown()
     pause_sub.unregister()
     stop_sub.unregister()
+    if diagnostics is not None:
+        try:
+            diagnostics.close()
+        except Exception:
+            pass

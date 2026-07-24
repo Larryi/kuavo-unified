@@ -29,8 +29,8 @@ artifacts/*
 artifacts/lingbot/*
 !artifacts/lingbot/qwen25_runtime/
 !artifacts/lingbot/qwen25_runtime/**
-!artifacts/lingbot/run_20260703_113523/
-!artifacts/lingbot/run_20260703_113523/**
+!artifacts/lingbot/run_20260710_024954/
+!artifacts/lingbot/run_20260710_024954/**
 
 # Upload checkpoints and completed submissions must never enter the build context.
 .ossutil_checkpoint/

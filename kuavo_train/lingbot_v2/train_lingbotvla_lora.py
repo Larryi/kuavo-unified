@@ -15,6 +15,11 @@ from kuavo_train.lingbot_v2.lora import (
     apply_lora,
     merge_lora_state_dict,
 )
+from kuavo_train.lingbot_v2.attention_compat import (
+    patch_v2_attention_constructors,
+    prepare_attention_imports,
+)
+from kuavo_train.lingbot_v2.dependency_checks import validate_utils3d
 
 
 def _load_upstream_trainer():
@@ -36,8 +41,11 @@ def _load_upstream_trainer():
 
 
 def main() -> None:
+    validate_utils3d()
     settings = LingbotV2LoraSettings.from_env()
+    attention_backend = prepare_attention_imports()
     trainer = _load_upstream_trainer()
+    patch_v2_attention_constructors(attention_backend)
 
     original_build = trainer.build_foundation_model
 

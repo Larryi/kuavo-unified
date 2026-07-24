@@ -29,4 +29,4 @@ images:
   - observation.images.camera_wrist_right:
       origin_keys: observation.images.wrist_cam_r
 
-norm_stats: assets/norm_stats/kuavo_v2_bimanual_meanstd.json
+norm_stats: assets/norm_stats/kuavo_v2_bimanual_task2_meanstd.json

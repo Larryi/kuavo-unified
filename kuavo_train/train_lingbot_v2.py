@@ -36,7 +36,12 @@ def main(cfg: DictConfig) -> None:
     env = {str(k): str(v) for k, v in dict(policy_cfg.get("env", {})).items()}
     # JSON-valued LoRA settings are awkward to pass through Hydra's override grammar.
     # Prefer an explicit shell environment variable when provided.
-    for key in ("KUAVO_LINGBOT_V2_LORA", "CUDA_VISIBLE_DEVICES", "LINGBOT_V2_ROOT"):
+    for key in (
+        "KUAVO_LINGBOT_V2_LORA",
+        "KUAVO_LINGBOT_V2_ATTENTION_BACKEND",
+        "CUDA_VISIBLE_DEVICES",
+        "LINGBOT_V2_ROOT",
+    ):
         if os.getenv(key):
             env[key] = os.environ[key]
     cuda_devices = [item for item in env.get("CUDA_VISIBLE_DEVICES", "0").split(",") if item.strip()]
@@ -65,6 +70,15 @@ def main(cfg: DictConfig) -> None:
     micro_batch = int(cfg.training.batch_size)
     accumulation = int(cfg.training.accumulation_steps)
     global_batch = micro_batch * accumulation * world_size
+    model_path = Path(str(policy_cfg.model_path))
+    tokenizer_path = Path(str(policy_cfg.tokenizer_path))
+    required_tokenizer_files = ("config.json", "tokenizer_config.json", "tokenizer.json")
+    missing_tokenizer_files = [
+        name for name in required_tokenizer_files if not (tokenizer_path / name).is_file()
+    ]
+    if missing_tokenizer_files:
+        missing = ", ".join(missing_tokenizer_files)
+        raise FileNotFoundError(f"Incomplete Qwen3-VL assets at {tokenizer_path}; missing: {missing}")
     extra_args = [
         "--data.train_path",
         str(Path(cfg.root).expanduser()),
@@ -81,9 +95,9 @@ def main(cfg: DictConfig) -> None:
         "--train.num_train_epochs",
         str(int(cfg.training.max_epoch)),
         "--model.model_path",
-        str(policy_cfg.model_path),
+        str(model_path),
         "--model.tokenizer_path",
-        str(policy_cfg.tokenizer_path),
+        str(tokenizer_path),
     ]
     extra_args.extend(str(item) for item in policy_cfg.get("extra_args", []))
 

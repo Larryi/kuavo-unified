@@ -43,6 +43,9 @@ DEFAULT_QWEN25_PATH = "/home/larry/Qwen2.5_VL"
 DEFAULT_LINGBOT_V2_ROOT = "/home/larry/lingbot-vla-v2"
 DEFAULT_QWEN3VL_PATH = "/mnt/pqssd/pretrained/Qwen3-VL-4B-Instruct"
 DEFAULT_NORM_STATS = "assets/norm_stats/lerobot_trimmed.json"
+DEFAULT_LINGBOT_V2_NORM_STATS = "assets/norm_stats/kuavo_v2_right_arm_meanstd.json"
+DEFAULT_LINGBOT_V2_TASK2_NORM_STATS = "assets/norm_stats/kuavo_v2_bimanual_task2_meanstd.json"
+DEFAULT_LINGBOT_V2_ROBOT_NAME = "kuavo_v2_right_arm"
 DEFAULT_TASK = "Pick and Place the safety belt, cable and pin connector"
 
 
@@ -204,10 +207,68 @@ def is_visual_key(key: str) -> bool:
 
 
 def missing_required_keys(policy, sample: dict) -> list[str]:
+    if str(getattr(policy.config, "type", "")) == "lingbot_v2":
+        missing = []
+        if "observation.state" not in sample:
+            missing.append("observation.state")
+        if "observation.images.head_cam_h" not in sample and "observation.images.camera_top" not in sample:
+            missing.append("observation.images.head_cam_h|observation.images.camera_top")
+        has_wrist = any(
+            key in sample
+            for key in (
+                "observation.images.wrist_cam_l",
+                "observation.images.wrist_cam_r",
+                "observation.images.camera_wrist_left",
+                "observation.images.camera_wrist_right",
+            )
+        )
+        if not has_wrist:
+            missing.append("observation.images.wrist_cam_l|observation.images.wrist_cam_r")
+        return missing
+
     required = set(policy.config.input_features)
     required.update(getattr(policy.config, "image_features", {}) or {})
     required.update(getattr(policy.config, "depth_features", {}) or {})
     return sorted(key for key in required if key not in sample)
+
+
+def visual_keys_for_policy(policy, sample: dict) -> list[str]:
+    if str(getattr(policy.config, "type", "")) == "lingbot_v2":
+        candidates = (
+            "observation.images.head_cam_h",
+            "observation.images.camera_top",
+            "observation.images.wrist_cam_l",
+            "observation.images.wrist_cam_r",
+            "observation.images.camera_wrist_left",
+            "observation.images.camera_wrist_right",
+        )
+        return [key for key in candidates if key in sample]
+
+    depth_keys = get_depth_keys(policy)
+    return [
+        key for key in policy.config.input_features if is_visual_key(key) or key in depth_keys
+    ]
+
+
+def observation_for_policy(policy, sample: dict, task: str) -> dict:
+    if str(getattr(policy.config, "type", "")) == "lingbot_v2":
+        candidates = (
+            "observation.state",
+            "observation.images.head_cam_h",
+            "observation.images.camera_top",
+            "observation.images.wrist_cam_l",
+            "observation.images.wrist_cam_r",
+            "observation.images.camera_wrist_left",
+            "observation.images.camera_wrist_right",
+        )
+        observation = {key: sample[key] for key in candidates if key in sample}
+        observation["task"] = sample.get("task") or task
+        return observation
+
+    observation = {key: sample[key] for key in policy.config.input_features if key in sample}
+    if "smolvla" in str(getattr(policy.config, "type", "")):
+        observation["task"] = sample.get("task") or task
+    return observation
 
 
 def prepare_depth_batch(policy, batch: dict) -> None:
@@ -297,6 +358,8 @@ def load_model(
     lingbot_root: str,
     qwen25_path: str,
     norm_stats_file: str,
+    robot_name: str,
+    use_compile: bool,
     task: str,
 ):
     device = torch.device(device_name if torch.cuda.is_available() or not device_name.startswith("cuda") else "cpu")
@@ -316,12 +379,12 @@ def load_model(
         policy_kwargs = {
             "lingbot_v2_root": lingbot_root,
             "qwen3vl_path": qwen25_path,
-            "robot_name": "kuavo_v2",
+            "robot_name": robot_name,
             "task_prompt": task,
             "use_length": 50,
             "chunk_ret": True,
             "norm_stats_file": norm_stats_file,
-            "use_compile": False,
+            "use_compile": use_compile,
         }
     return load_policy_and_processors(
         Path(policy_path), policy_type, device, policy_kwargs=policy_kwargs
@@ -339,6 +402,8 @@ def load_dataset(
     lingbot_root: str,
     qwen25_path: str,
     norm_stats_file: str,
+    robot_name: str,
+    use_compile: bool,
     task: str,
     video_backend: str,
 ):
@@ -349,6 +414,8 @@ def load_dataset(
         lingbot_root,
         qwen25_path,
         norm_stats_file,
+        robot_name,
+        use_compile,
         task,
     )
     ds_meta = LeRobotDatasetMetadata(repo_id, root=Path(dataset_root))
@@ -365,9 +432,7 @@ def load_dataset(
 
 
 def predict_actions(policy, preprocessor, postprocessor, sample: dict, task: str, mode: str, policy_type: str) -> torch.Tensor:
-    observation = {key: sample[key] for key in policy.config.input_features if key in sample}
-    if "smolvla" in str(getattr(policy.config, "type", "")):
-        observation["task"] = sample.get("task") or task
+    observation = observation_for_policy(policy, sample, task)
     batch = preprocessor(observation)
     for key in list(batch):
         if is_depth_key(key) and isinstance(batch[key], torch.Tensor):
@@ -414,15 +479,13 @@ def build_episode_timeline(
     inference_frames: list[int] = []
     inference_ms: list[float] = []
     depth_keys = get_depth_keys(policy)
-    visual_keys = [
-        key for key in policy.config.input_features if is_visual_key(key) or key in depth_keys
-    ]
 
     for frame in range(frame_count):
         gt[frame] = read_raw_gt_chunk(dataset, frame, 1)[0].numpy()
 
     for frame in range(0, frame_count, inference_stride):
         sample = dict(dataset[frame])
+        visual_keys = visual_keys_for_policy(policy, sample)
         for key in visual_keys:
             if key not in sample:
                 continue
@@ -547,11 +610,27 @@ def main() -> None:
             qwen25_path = st.text_input(
                 "Qwen processor path", DEFAULT_QWEN3VL_PATH if is_v2 else DEFAULT_QWEN25_PATH
             )
-            norm_stats_file = st.text_input("Norm stats file", DEFAULT_NORM_STATS)
+            if is_v2:
+                v2_preset = st.selectbox("LingBot V2 preset", ["Task1 right arm", "Task2 bimanual", "Custom"], index=0)
+                if v2_preset == "Task2 bimanual":
+                    default_robot_name = "kuavo_v2_bimanual"
+                    default_norm_stats = DEFAULT_LINGBOT_V2_TASK2_NORM_STATS
+                else:
+                    default_robot_name = DEFAULT_LINGBOT_V2_ROBOT_NAME
+                    default_norm_stats = DEFAULT_LINGBOT_V2_NORM_STATS
+                robot_name = st.text_input("LingBot V2 robot name", default_robot_name)
+                norm_stats_file = st.text_input("Norm stats file", default_norm_stats)
+                use_compile = st.checkbox("Use torch.compile", value=False)
+            else:
+                robot_name = ""
+                norm_stats_file = st.text_input("Norm stats file", DEFAULT_NORM_STATS)
+                use_compile = False
         else:
             lingbot_root = ""
             qwen25_path = ""
             norm_stats_file = ""
+            robot_name = ""
+            use_compile = False
         episode = st.number_input("Episode", min_value=0, value=0, step=1)
         predict_mode = st.selectbox("Predict mode", ["chunk", "single"], index=0)
         if policy_type == "diffusion" and predict_mode == "chunk":
@@ -580,6 +659,8 @@ def main() -> None:
         lingbot_root,
         qwen25_path,
         norm_stats_file,
+        robot_name,
+        use_compile,
         task,
     )
     dataset = load_dataset(
@@ -592,6 +673,8 @@ def main() -> None:
         lingbot_root,
         qwen25_path,
         norm_stats_file,
+        robot_name,
+        use_compile,
         task,
         video_backend,
     )
@@ -626,7 +709,7 @@ def main() -> None:
         st.stop()
 
     depth_keys = get_depth_keys(policy)
-    image_keys = [key for key in policy.config.input_features if is_visual_key(key) or key in depth_keys]
+    image_keys = visual_keys_for_policy(policy, sample)
     preview_sample = dict(sample)
     manual_box = (left_crop, top_crop, right_crop, bottom_crop)
     for key in image_keys:
@@ -709,7 +792,17 @@ def main() -> None:
         "GT and Pred are action values. Red vertical rules mark model inference frames; "
         "the lower chart is signed prediction error."
     )
-    timeline_key = (dataset_root, int(episode), policy_path, int(timeline_frames), int(inference_stride))
+    timeline_key = (
+        dataset_root,
+        int(episode),
+        policy_path,
+        policy_type,
+        robot_name,
+        norm_stats_file,
+        bool(use_compile),
+        int(timeline_frames),
+        int(inference_stride),
+    )
     if st.button("Run episode timeline", type="primary"):
         with st.spinner("Running chunk inference over the selected episode..."):
             st.session_state["episode_timeline"] = {

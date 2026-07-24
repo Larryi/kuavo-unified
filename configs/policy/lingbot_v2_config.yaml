@@ -10,8 +10,8 @@ root: /mnt/pqssd/Real_PQ_3.0/TASK1_SZ/task1_supertrimmed_200
 
 training:
   output_directory: outputs/train/${task}/${method}
-  batch_size: 1
-  accumulation_steps: 8
+  batch_size: 2
+  accumulation_steps: 4
   max_epoch: 10
   max_training_step: 10000
   resume: false
@@ -33,6 +33,6 @@ policy:
     LINGBOT_V2_ROOT: /home/larry/lingbot-vla-v2
     HF_HUB_OFFLINE: "1"
     TRANSFORMERS_OFFLINE: "1"
+    KUAVO_LINGBOT_V2_ATTENTION_BACKEND: auto
     KUAVO_LINGBOT_V2_LORA: '{"enabled":true,"rank":8,"alpha":16,"dropout":0.0}'
   extra_args: []
-

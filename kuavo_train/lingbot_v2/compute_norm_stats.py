@@ -11,6 +11,8 @@ import runpy
 import sys
 import types
 
+import torch.multiprocessing as mp
+
 from lingbotvla.utils.arguments import DataArguments, TrainingArguments
 
 
@@ -58,6 +60,7 @@ class MyDataArguments(DataArguments):
 
 
 def main() -> None:
+    mp.set_sharing_strategy("file_system")
     os.environ.setdefault("LOCAL_RANK", "0")
     os.environ.setdefault("RANK", "0")
     os.environ.setdefault("WORLD_SIZE", "1")

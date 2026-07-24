@@ -12,6 +12,7 @@ from typing import Any
 
 import numpy as np
 import torch
+import yaml
 
 from kuavo_deploy.utils.lingbot_adapter import _to_hwc_uint8
 
@@ -66,7 +67,9 @@ class LingbotV2DeployPolicy:
         self.model_path = str(Path(model_path).expanduser().resolve())
         self.robot_name = robot_name
         self.task_prompt = task_prompt or "robot manipulation"
-        self.action_dim = self._action_dim_from_stats(norm_stats_file)
+        self.action_dim = self._raw_dim_from_robot_config(robot_name, "actions", "action")
+        self.state_dim = self._raw_dim_from_robot_config(robot_name, "states", "observation.state")
+        self._validate_norm_stats(norm_stats_file)
         self.policy = module.LingbotVLAv2Server(
             path_to_pi_model=self.model_path,
             robot_norm_path=norm_stats_file or None,
@@ -79,6 +82,7 @@ class LingbotV2DeployPolicy:
         self.policy.reset(robo_name=self.robot_name)
 
         action_dim = self.action_dim
+        state_dim = self.state_dim
         chunk_size = int(getattr(self.policy.config, "chunk_size", 50))
         self.config = SimpleNamespace(
             type="lingbot_v2",
@@ -86,7 +90,7 @@ class LingbotV2DeployPolicy:
                 "observation.images.head_cam_h": SimpleNamespace(shape=(3, 480, 848)),
                 "observation.images.wrist_cam_l": SimpleNamespace(shape=(3, 480, 848)),
                 "observation.images.wrist_cam_r": SimpleNamespace(shape=(3, 480, 848)),
-                "observation.state": SimpleNamespace(shape=(action_dim,)),
+                "observation.state": SimpleNamespace(shape=(state_dim,)),
             },
             output_features={"action": SimpleNamespace(shape=(action_dim,))},
             image_features={},
@@ -109,20 +113,42 @@ class LingbotV2DeployPolicy:
         return self
 
     @staticmethod
-    def _action_dim_from_stats(norm_stats_file: str) -> int:
+    def _validate_norm_stats(norm_stats_file: str) -> None:
         if not norm_stats_file:
             raise ValueError("LingBot-VLA v2 deployment requires lingbot_norm_stats_file")
         with open(norm_stats_file, "r", encoding="utf-8") as f:
             stats = json.load(f).get("norm_stats", {})
-        action_dim = 0
         for key in ("action.arm.position", "action.effector.position"):
-            values = stats.get(key, {}).get("mean")
-            if values is None:
+            if stats.get(key, {}).get("mean") is None:
                 raise KeyError(f"Missing {key}.mean in {norm_stats_file}")
-            action_dim += len(values[0]) if values and isinstance(values[0], list) else len(values)
-        if action_dim not in (8, 16):
-            raise ValueError(f"Expected Kuavo action dimension 8 or 16, got {action_dim}")
-        return action_dim
+
+    @staticmethod
+    def _raw_dim_from_robot_config(robot_name: str, category: str, origin_key: str) -> int:
+        robot_config = Path("configs/robot_configs") / f"{robot_name}.yaml"
+        if not robot_config.is_file():
+            raise FileNotFoundError(f"LingBot-VLA v2 robot config not found: {robot_config}")
+        with open(robot_config, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+
+        max_end = 0
+        for feature_info in config.get(category, []):
+            if not isinstance(feature_info, dict):
+                continue
+            spec = next(iter(feature_info.values()))
+            origins = spec.get("origin_keys")
+            if isinstance(origins, str):
+                if origins == origin_key:
+                    return -1
+                continue
+            if not isinstance(origins, list):
+                continue
+            for item in origins:
+                for key, span in item.items():
+                    if key == origin_key and "end" in span:
+                        max_end = max(max_end, int(span["end"]))
+        if max_end <= 0:
+            raise ValueError(f"Cannot infer {origin_key} dim from {robot_config}")
+        return max_end
 
     def _state(self, observation: dict[str, Any]) -> np.ndarray:
         for key in ("observation.state", "state", "state.state"):
@@ -131,9 +157,9 @@ class LingbotV2DeployPolicy:
                 if isinstance(value, torch.Tensor):
                     value = value.detach().cpu().numpy()
                 state = np.asarray(value, dtype=np.float32).reshape(-1)
-                if state.shape[0] != self.action_dim:
+                if state.shape[0] != self.state_dim:
                     raise ValueError(
-                        f"LingBot-VLA v2 Kuavo state must be {self.action_dim}-D, got {state.shape}"
+                        f"LingBot-VLA v2 Kuavo state must be {self.state_dim}-D, got {state.shape}"
                     )
                 return state
         raise KeyError("Missing observation.state")

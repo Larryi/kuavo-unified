@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IMAGE_NAME="${IMAGE_NAME:-kdc_real_task2_lingbot}"
+IMAGE_NAME="${IMAGE_NAME:-kdc_real_task1_lingbot}"
 SECRET_FILE="${KUAVO_DIAG_ENV:-/home/larry/kuavo_diag.env}"
 BUILD_LOG="${BUILD_LOG:-/tmp/${IMAGE_NAME}.build.log}"
 

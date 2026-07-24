@@ -17,7 +17,7 @@ env:
   env_name: Kuavo-Real
   control_mode: joint # joint or eef （eef still under development）
   eef_type: leju_claw
-  which_arm: both
+  which_arm: right
   head_init: null
   ros_rate: 10  # Inference speed in Hz
 
@@ -29,7 +29,7 @@ env:
   depth_range: &DEPTHRANGE [0, 1500]  # Depth imaging range in mm, default=[0,1500]
   obs_key_map:  # Topic, msg type, freq, img size, depth crop. Must be consistent with training config!
     head_cam_h: ["/cam_h/color/image_raw/compressed", "CompressedImage", 30, *IMGSIZE]  # Head RGB img topic, COMPULSORY
-    wrist_cam_l: ["/cam_l/color/image_raw/compressed", "CompressedImage", 30, *IMGSIZE]  # Left wrist RGB img topic, choose one between this and below
+    # wrist_cam_l: ["/cam_l/color/image_raw/compressed", "CompressedImage", 30, *IMGSIZE]  # Left wrist RGB img topic, choose one between this and below
     wrist_cam_r: ["/cam_r/color/image_raw/compressed", "CompressedImage", 30, *IMGSIZE]  # Left wrist RGB img topic, choose one between this and above
     joint_q: ["/sensors_data_raw", "sensorsData", 500]  # Joint angle topic, COMPULSORY
     # qiangnao: ["/dexhand/state", "JointState", 500]
@@ -85,23 +85,24 @@ env:
 inference:
   go_bag_path: /path/to/your/go.bag  #! ! ! Temporarily not used in the competition emulator! ! ! , the complete path of the bag needs to be provided during real-machine inference, such as reaching the pre-grab posture, etc. You can directly copy a trained rosbag control.
   policy_type: "lingbot"  #Strategy name, supports diffusion, act, lingbot, etc.
-  pretrained_path: "/root/kuavo_data_challenge/artifacts/lingbot/run_20260703_113523/checkpoints/global_step_141675/hf_ckpt"
+  pretrained_path: "/root/kuavo_data_challenge/artifacts/lingbot/run_20260710_024954/checkpoints/global_step_15000/hf_ckpt"
   eval_episodes: 3
   seed: 42  #Random seeds can be used to fix the initial state of each object in simulation to facilitate reproduction.
   start_seed: 42  #The random seed at the beginning of the round can be used to fix the initial state of each object in the simulation to facilitate reproduction.
   device: "cuda"  # or "cpu"
-  task: "r2"
-  method: "lingbot_task2_epoch1"
-  timestamp: "run_20260703_113523"
+  task: "r1"
+  method: "lingbot_redata_task1"
+  timestamp: "run_20260710_024954"
   epoch: best  #Which epoch to use for training saving, you can fill in 50, 100, best, etc. Note: the code will load the model parameters of the policy in outputs/train/<task>/<method>/<timestamp>/epoch<epoch>
   max_episode_steps: 2000
 
   #Effective when policy_type=lingbot
   lingbot_root: "/root/kuavo_data_challenge/third_party/lingbot-vla"
   qwen25_path: "/root/kuavo_data_challenge/artifacts/lingbot/qwen25_runtime"
-  task_prompt: "Sorting sleeves by weight"
-  lingbot_use_length: 5
+  task_prompt: "Place the pin connector into the left slot, the safety belt into the middle slot,
+and the cable into the right slot of the box"
+  lingbot_use_length: 20
   lingbot_chunk_ret: false
-  lingbot_norm_stats_file: "/root/kuavo_data_challenge/assets/norm_stats/task2_supertrimmed_200.json"
+  lingbot_norm_stats_file: "/root/kuavo_data_challenge/assets/norm_stats/task1_supertrimmed_107.json"
   lingbot_data_type: "customized"
   lingbot_execute_raw_action: false

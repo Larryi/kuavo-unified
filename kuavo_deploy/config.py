@@ -172,6 +172,15 @@ class ConfigInference:
     lingbot_norm_stats_file: str = ""
     lingbot_data_type: str = "robotwin"
     lingbot_execute_raw_action: bool = False
+    gripper_latch_enabled: bool = False
+    gripper_latch_action_indices: List[int] = field(default_factory=lambda: [7])
+    gripper_latch_intent_steps: int = 5
+    gripper_latch_close_threshold: float = 0.7
+    gripper_latch_open_threshold: float = 0.3
+    gripper_latch_close_ratio: float = 0.6
+    gripper_latch_open_ratio: float = 0.8
+    gripper_latch_min_close_seconds: float = 1.0
+    gripper_latch_min_open_seconds: float = 0.4
     lingbot_v2_root: str = ""
     qwen3vl_path: str = ""
     lingbot_v2_robot_name: str = "kuavo_v2"

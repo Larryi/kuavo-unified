@@ -1,6 +1,6 @@
 data:
   datasets_type: vla
-  data_name: kuavo_v2_right_arm
+  data_name: kuavo_v2_bimanual
   train_path: /path/to/lerobot_dataset
   robot_config_root: configs/robot_configs
   joints:
@@ -9,6 +9,7 @@ data:
     - effector.position: 2
   cameras:
     - camera_top
+    - camera_wrist_left
     - camera_wrist_right
   norm_type:
     - arm.position: meanstd
@@ -17,12 +18,12 @@ data:
   prompt_type: global
   num_workers: 4
   use_future_image: true
-  norm_path: assets/norm_stats/kuavo_v2_right_arm_meanstd.json
+  norm_path: assets/norm_stats/kuavo_v2_bimanual_task2_meanstd.json
   data_ratio_for_norm_compute: 1.0
   norm_merge_chunk_dim: true
 
 train:
-  output_dir: /tmp/lingbot_v2_norm
+  output_dir: /tmp/lingbot_v2_norm_task2
   micro_batch_size: 8
   global_batch_size: 8
   chunk_size: 50
