@@ -248,8 +248,29 @@ G 阶段验收：
 - Gate C 仍为“部分通过”：当前执行环境无可用 CUDA，尚未执行真实
   DP 最小训练→保存→重载闭环。该项必须在 GPU 环境补测后才能把训练
   链路标记为交付就绪。
-- D（Docker）、E（云端训练脚本）、F（数据编辑/QC/北京导出）和
-  G（LingBot-v1 云端流水线）尚未开始。
+- D 阶段代码迁移已完成：classic Docker 使用固定的 bundled LeRobot，
+  BuildKit 独立输入 `myenv.tar.gz`，构建上下文排除凭据、输出、权重和
+  其他 backend。`bash -n`、构建 dry-run 和 `docker buildx build
+  --check` 已通过；未提供外部 `myenv.tar.gz`，因此尚未执行完整镜像
+  构建、容器 import smoke 和离线 loader，Gate D 为“部分通过”。
+- E 阶段代码迁移已完成：A100 流水线要求显式
+  `DATASET_REPO`/`MODEL_REPO`，代码归档要求 SHA-256，dry-run 不需要
+  token 且不创建工作目录，缺少 `HF_TOKEN` 会在任何写入前安全失败。
+  尚未执行真实下载、训练或上传，Gate E 为“部分通过”。
+- F 阶段代码迁移已完成：episode editor 已按来源顺序更新到 v10；
+  rosbag 转换器按固定 LeRobot API 选择性启用流式编码参数且未引入
+  `.bak`；加入 Task 1/2/3 QC、header-aligned rebuild 和北京数据
+  审计/导出工具。Python 语法、全部 CLI `--help`、shell 语法、显式
+  输出目录和只读输入行为已检查。当前机器未提供对应 rosbag/LeRobot
+  数据 fixture，尚未执行端到端时间戳/状态/动作对齐重建，Gate F 为
+  “部分通过”。
+- G 阶段代码迁移已完成：云端 bundle 强制 LeRobot `56b43cc8`、
+  LingBot-v1 `4eb34b7` 及两个嵌套 gitlink；bundle 内容和敏感文件
+  门禁通过。流水线要求显式数据集/目标模型仓库和两份归档 SHA-256，
+  无密钥 dry-run 与缺少密钥安全失败均通过。已修复固定 LingBot-v1
+  API 与旧 trainer 的不兼容，四卡配置解析、checkpoint 完整性清理
+  fixture 和 exporter dry-run 已通过。尚未在 CUDA 云实例执行真实
+  norm 计算、FSDP2 训练、导出和上传，Gate G 为“部分通过”。
 
 因此当前分支适合作为可复现的继续集成基线，但还不是最终训练/部署
 交付版本。
