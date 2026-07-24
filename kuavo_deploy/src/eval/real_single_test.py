@@ -53,7 +53,6 @@ from kuavo_deploy.utils.diagnostics import DiagnosticsManager
 from kuavo_deploy.utils.logging_utils import setup_logger
 from kuavo_deploy.utils.gripper_latch import GripperIntentLatch, GripperLatchConfig
 from kuavo_deploy.utils.policy_loader import (
-    add_task_description_if_needed,
     load_policy_and_processors,
     resolve_eval_output_dir,
     resolve_policy_path,
@@ -287,7 +286,6 @@ def main(config: KuavoConfig, env: gym.Env):
             if hasattr(policy, "reset"):
                 policy.reset()
             observation, info = env.reset(seed=episode+start_seed)
-            observation = add_task_description_if_needed(observation, cfg)
             if active_recorder is not None:
                 active_recorder.log_state(0, observation.get("observation.state"), None)
             active_video_recorder = (
@@ -359,7 +357,6 @@ def main(config: KuavoConfig, env: gym.Env):
                     observation, reward, terminated, truncated, info = env.step(numpy_action)
                     if gripper_latch is not None:
                         gripper_latch.advance(1)
-                    observation = add_task_description_if_needed(observation, cfg)
                     if active_video_recorder is not None:
                         active_video_recorder.submit(observation)
                     if active_snapshot_uploader is not None:

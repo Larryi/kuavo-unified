@@ -32,9 +32,6 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetad
 
 
 DEFAULT_DATASET_ROOT = Path("/mnt/pqssd/Real_PQ_3.0/TASK1_SZ/lerobot_trimmed")
-DEFAULT_POLICY_PATH = Path(
-    "outputs/train/r1/smolvla/run_20260625_212157_from10k_lrfix/checkpoints/040000/pretrained_model"
-)
 DEFAULT_TASK = "Pick and Place the safety belt, cable and pin connector"
 
 
@@ -47,15 +44,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset-root", type=Path, default=DEFAULT_DATASET_ROOT)
     parser.add_argument("--repo-id", default="kuavo/task1_sz")
     parser.add_argument(
-        "--policy-type", choices=["smolvla", "act", "diffusion", "lingbot"], default="smolvla"
+        "--policy-type",
+        choices=["act", "diffusion", "lingbot", "lingbot_v2"],
+        default="act",
     )
-    parser.add_argument("--policy-path", type=Path, default=DEFAULT_POLICY_PATH)
+    parser.add_argument("--policy-path", type=Path, required=True)
     parser.add_argument("--task-description", default=DEFAULT_TASK)
     parser.add_argument("--lingbot-root", default="")
     parser.add_argument("--qwen25-path", default="")
     parser.add_argument("--norm-stats-file", default="")
     parser.add_argument("--lingbot-data-type", default="customized")
     parser.add_argument("--lingbot-use-length", type=int, default=5)
+    parser.add_argument("--robot-name", default="kuavo_v2_right_arm")
+    parser.add_argument("--use-compile", action="store_true")
     parser.add_argument("--episodes", type=int, nargs="*", default=[0, 1, 2, 3, 4])
     parser.add_argument("--max-frames-per-episode", type=int, default=80)
     parser.add_argument("--stride", type=int, default=5)
@@ -87,11 +88,8 @@ def as_cpu_float_tensor(value) -> torch.Tensor:
     return torch.as_tensor(value, dtype=torch.float32)
 
 
-def make_observation(sample: dict, input_keys: Iterable[str], task: str, policy_type: str) -> dict:
-    observation = {key: sample[key] for key in input_keys if key in sample}
-    if policy_type == "smolvla":
-        observation["task"] = sample.get("task") or task
-    return observation
+def make_observation(sample: dict, input_keys: Iterable[str]) -> dict:
+    return {key: sample[key] for key in input_keys if key in sample}
 
 
 def missing_required_keys(policy, sample: dict) -> list[str]:
@@ -121,7 +119,7 @@ def prediction_from_sample(
     mode: str,
     policy_type: str,
 ) -> torch.Tensor:
-    observation = make_observation(sample, policy.config.input_features.keys(), task, policy_type)
+    observation = make_observation(sample, policy.config.input_features.keys())
     batch = preprocessor(observation)
     with torch.inference_mode():
         if mode == "chunk" and hasattr(policy, "predict_action_chunk"):
@@ -221,6 +219,17 @@ def main() -> None:
             "norm_stats_file": args.norm_stats_file,
             "data_type": args.lingbot_data_type,
             "execute_raw_action": False,
+        }
+    elif args.policy_type == "lingbot_v2":
+        policy_kwargs = {
+            "lingbot_v2_root": args.lingbot_root,
+            "qwen3vl_path": args.qwen25_path,
+            "robot_name": args.robot_name,
+            "task_prompt": args.task_description,
+            "use_length": args.max_horizon if args.mode == "chunk" else args.lingbot_use_length,
+            "chunk_ret": args.mode == "chunk",
+            "norm_stats_file": args.norm_stats_file,
+            "use_compile": args.use_compile,
         }
     policy, preprocessor, postprocessor = load_policy_and_processors(
         policy_path, args.policy_type, device, policy_kwargs=policy_kwargs

@@ -29,10 +29,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetad
 
 
 DEFAULT_DATASET_ROOT = "/mnt/pqssd/Real_PQ_3.0/TASK1_SZ/lerobot_trimmed"
-DEFAULT_POLICY_PATH = (
-    "/home/larry/kuavo_data_challenge/outputs/train/r1/smolvla/"
-    "run_20260625_212157_from10k_lrfix/checkpoints/040000/pretrained_model"
-)
+DEFAULT_POLICY_PATH = ""
 DEFAULT_LINGBOT_POLICY_PATH = (
     "/mnt/pqssd/lingbot_weights/clean_meanstd_fm_L2V2_mb16_gb16_8k_20260623_175250/"
     "checkpoints/global_step_8000/hf_ckpt"
@@ -265,10 +262,7 @@ def observation_for_policy(policy, sample: dict, task: str) -> dict:
         observation["task"] = sample.get("task") or task
         return observation
 
-    observation = {key: sample[key] for key in policy.config.input_features if key in sample}
-    if "smolvla" in str(getattr(policy.config, "type", "")):
-        observation["task"] = sample.get("task") or task
-    return observation
+    return {key: sample[key] for key in policy.config.input_features if key in sample}
 
 
 def prepare_depth_batch(policy, batch: dict) -> None:
@@ -587,7 +581,7 @@ def main() -> None:
         dataset_root = st.text_input("Dataset root", DEFAULT_DATASET_ROOT)
         repo_id = st.text_input("Repo ID", "kuavo/task1_sz")
         policy_type = st.selectbox(
-            "Policy type", ["smolvla", "act", "diffusion", "lingbot", "lingbot_v2"], index=0
+            "Policy type", ["act", "diffusion", "lingbot", "lingbot_v2"], index=0
         )
         if policy_type == "lingbot":
             default_policy_path = DEFAULT_LINGBOT_POLICY_PATH

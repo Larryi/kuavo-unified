@@ -6,10 +6,7 @@ import torch
 from kuavo_deploy.utils.logging_utils import setup_logger
 from kuavo_train.wrapper.policy.act.ACTPolicyWrapper import CustomACTPolicyWrapper
 from kuavo_train.wrapper.policy.diffusion.DiffusionPolicyWrapper import CustomDiffusionPolicyWrapper
-from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.factory import make_pre_post_processors
-from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
-from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
 
 log_model = setup_logger("model")
@@ -34,34 +31,6 @@ def resolve_eval_output_dir(cfg: Any, pretrained_path: Path) -> Path:
     return Path(f"outputs/eval/{cfg.task}/{cfg.method}/{cfg.timestamp}/epoch{cfg.epoch}")
 
 
-def _load_smolvla_policy(pretrained_path: Path, device: torch.device):
-    tokenizer_dir = pretrained_path / "vlm_tokenizer"
-    if not tokenizer_dir.is_dir():
-        raise FileNotFoundError(
-            f"SmolVLA tokenizer/config directory not found: {tokenizer_dir}. "
-            "Ship the VLM tokenizer/config files inside pretrained_model/vlm_tokenizer."
-        )
-
-    config = PreTrainedConfig.from_pretrained(pretrained_path)
-    if not isinstance(config, SmolVLAConfig):
-        raise TypeError(f"Expected SmolVLAConfig in {pretrained_path}, got {type(config)}")
-    config.device = str(device)
-    # The fine-tuned checkpoint contains model weights. We only need the VLM config/tokenizer files at runtime.
-    config.load_vlm_weights = False
-    config.vlm_model_name = str(tokenizer_dir.resolve())
-
-    policy = SmolVLAPolicy.from_pretrained(pretrained_path, config=config, strict=True)
-    preprocessor, postprocessor = make_pre_post_processors(
-        policy.config,
-        pretrained_path=pretrained_path,
-        preprocessor_overrides={
-            "device_processor": {"device": str(device)},
-            "tokenizer_processor": {"tokenizer_name": str(tokenizer_dir.resolve())},
-        },
-    )
-    return policy, preprocessor, postprocessor
-
-
 def load_policy_and_processors(
     pretrained_path,
     policy_type: str,
@@ -84,8 +53,6 @@ def load_policy_and_processors(
         preprocessor, postprocessor = make_pre_post_processors(
             None, Path(str(pretrained_path).split("/epoch", 1)[0])
         )
-    elif policy_type == "smolvla":
-        policy, preprocessor, postprocessor = _load_smolvla_policy(pretrained_path, device)
     elif policy_type == "lingbot":
         if device.type != "cuda":
             raise ValueError("LingBot inference currently requires a CUDA device.")
@@ -115,15 +82,3 @@ def load_policy_and_processors(
         log_model.info(f"Model n_action_steps: {policy.config.n_action_steps}")
     log_model.info(f"Model device: {device}")
     return policy, preprocessor, postprocessor
-
-
-def add_task_description_if_needed(observation: dict, cfg: Any) -> dict:
-    if getattr(cfg, "policy_type", None) != "smolvla":
-        return observation
-
-    task_description = getattr(cfg, "task_description", None)
-    if not task_description:
-        raise ValueError("SmolVLA inference requires inference.task_description in kuavo_env.yaml.")
-
-    observation["task"] = task_description
-    return observation
