@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from types import MethodType
 
@@ -37,6 +38,7 @@ from kuavo_deploy.utils.gripper_latch import (
 )
 from kuavo_deploy.utils.policy_loader import load_policy_and_processors
 from lerobot.datasets.factory import resolve_delta_timestamps
+import lerobot.datasets.lerobot_dataset as lerobot_dataset_module
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 
 
@@ -56,6 +58,37 @@ DEFAULT_LINGBOT_V2_NORM_STATS = "assets/norm_stats/kuavo_v2_right_arm_meanstd.js
 DEFAULT_LINGBOT_V2_TASK2_NORM_STATS = "assets/norm_stats/kuavo_v2_bimanual_task2_meanstd.json"
 DEFAULT_LINGBOT_V2_ROBOT_NAME = "kuavo_v2_right_arm"
 DEFAULT_TASK = "Pick and Place the safety belt, cable and pin connector"
+
+
+@contextmanager
+def local_dataset_only(dataset_root: Path):
+    """Prevent a local viewer session from silently contacting Hugging Face."""
+
+    original_get_safe_version = lerobot_dataset_module.get_safe_version
+    original_metadata_pull = LeRobotDatasetMetadata.pull_from_repo
+    original_dataset_pull = LeRobotDataset.pull_from_repo
+    original_download = LeRobotDataset.download
+
+    def local_revision(_repo_id, revision):
+        return revision
+
+    def block_metadata_pull(_self, *_args, **_kwargs):
+        raise FileNotFoundError(f"Local LeRobot metadata is incomplete under {dataset_root / 'meta'}")
+
+    def block_data_pull(_self, *_args, **_kwargs):
+        raise FileNotFoundError(f"Local LeRobot episode data is incomplete under {dataset_root / 'data'}")
+
+    lerobot_dataset_module.get_safe_version = local_revision
+    LeRobotDatasetMetadata.pull_from_repo = block_metadata_pull
+    LeRobotDataset.pull_from_repo = block_data_pull
+    LeRobotDataset.download = block_data_pull
+    try:
+        yield
+    finally:
+        lerobot_dataset_module.get_safe_version = original_get_safe_version
+        LeRobotDatasetMetadata.pull_from_repo = original_metadata_pull
+        LeRobotDataset.pull_from_repo = original_dataset_pull
+        LeRobotDataset.download = original_download
 
 
 def fix_episode_subset_delta_indices(dataset) -> None:
@@ -496,15 +529,17 @@ def load_dataset(
         use_compile,
         task,
     )
-    ds_meta = LeRobotDatasetMetadata(repo_id, root=Path(dataset_root))
-    delta_timestamps = resolve_delta_timestamps(policy.config, ds_meta)
-    dataset = LeRobotDataset(
-        repo_id,
-        root=Path(dataset_root),
-        episodes=list(episodes),
-        delta_timestamps=delta_timestamps,
-        video_backend=video_backend or None,
-    )
+    dataset_root_path = Path(dataset_root).expanduser().resolve()
+    with local_dataset_only(dataset_root_path):
+        ds_meta = LeRobotDatasetMetadata(repo_id, root=dataset_root_path)
+        delta_timestamps = resolve_delta_timestamps(policy.config, ds_meta)
+        dataset = LeRobotDataset(
+            repo_id,
+            root=dataset_root_path,
+            episodes=list(episodes),
+            delta_timestamps=delta_timestamps,
+            video_backend=video_backend or None,
+        )
     fix_episode_subset_delta_indices(dataset)
     return dataset
 
