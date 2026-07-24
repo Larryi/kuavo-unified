@@ -16,6 +16,7 @@ import traceback
 import torch
 from torchvision.transforms.functional import to_tensor
 from kuavo_deploy.utils.obs_buffer import ObsBuffer
+from kuavo_deploy.utils.eef_commands import normalized_leju_claw_positions
 from kuavo_deploy.utils.signal_controller import ControlSignalManager
 
 
@@ -465,7 +466,7 @@ class KuavoBaseRosEnv(gym.Env):
 
         elif self.eef_type == 'leju_claw':
             eef_msg = JointState()
-            eef_msg.position = np.array([left_eef * 100, right_eef * 100])
+            eef_msg.position = normalized_leju_claw_positions(left_eef, right_eef)
             self.lejuclaw.control(target_positions=eef_msg.position)
 
         elif self.eef_type == 'qiangnao':
