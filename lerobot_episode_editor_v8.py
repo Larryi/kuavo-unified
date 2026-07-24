@@ -20,7 +20,9 @@ from __future__ import annotations
 import inspect
 import json
 import shutil
+import subprocess
 import time
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +49,10 @@ except Exception:
     pq = None
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import lerobot_dataset as lerobot_dataset_module
+
+
+DEFAULT_LEROBOT_VIDEO_ENCODER = lerobot_dataset_module.encode_video_frames
 
 
 AUTO_GENERATED_KEYS = {
@@ -54,10 +60,42 @@ AUTO_GENERATED_KEYS = {
     "episode_index",
     "frame_index",
     "timestamp",
-    "next.done",
     "task_index",
 }
-AUTO_PREFIXES = ("next.",)
+# RL transition labels such as next.reward and next.done are user data, not
+# writer-generated indexing fields. They must survive trim/export so an
+# offline replay buffer can reconstruct rewards and terminal transitions.
+AUTO_PREFIXES = ()
+
+
+def encode_h264_frames(
+    imgs_dir: Path | str,
+    video_path: Path | str,
+    fps: int,
+    *,
+    crf: int = 23,
+    preset: str = "veryfast",
+    **_: Any,
+) -> None:
+    """Fast H.264 encoder compatible with LeRobot's video worker API."""
+    imgs_dir = Path(imgs_dir)
+    video_path = Path(video_path)
+    video_path.parent.mkdir(parents=True, exist_ok=True)
+    system_ffmpeg = Path("/usr/bin/ffmpeg")
+    ffmpeg = str(system_ffmpeg) if system_ffmpeg.exists() else shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise FileNotFoundError("ffmpeg was not found")
+    subprocess.run(
+        [
+            ffmpeg, "-y", "-loglevel", "error",
+            "-framerate", str(int(fps)),
+            "-i", str(imgs_dir / "frame-%06d.png"),
+            "-c:v", "libx264", "-preset", str(preset),
+            "-crf", str(int(crf)), "-g", str(int(fps)),
+            "-pix_fmt", "yuv420p", str(video_path),
+        ],
+        check=True,
+    )
 
 
 def as_python_scalar(x: Any) -> Any:
@@ -1284,6 +1322,7 @@ def clean_frame_for_add(
     frame: dict[str, Any],
     task_map: dict[int, str],
     drop_feature_keys: set[str] | None = None,
+    features: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     new_frame = dict(frame)
     drop_feature_keys = drop_feature_keys or set()
@@ -1315,6 +1354,21 @@ def clean_frame_for_add(
         if key in AUTO_GENERATED_KEYS or any(key.startswith(p) for p in AUTO_PREFIXES):
             new_frame.pop(key, None)
 
+    # LeRobot decodes numeric shape=(1,) columns as scalars, while add_frame()
+    # validates against the declared singleton shape. Restore that dimension
+    # for RL labels (next.reward/next.done) and any other singleton feature.
+    for key, spec in (features or {}).items():
+        if key not in new_frame or tuple(spec.get("shape", ())) != (1,):
+            continue
+        value = new_frame[key]
+        if torch is not None and isinstance(value, torch.Tensor):
+            if value.ndim == 0:
+                new_frame[key] = value.reshape(1)
+        else:
+            array = np.asarray(value)
+            if array.ndim == 0:
+                new_frame[key] = array.reshape(1)
+
     return new_frame
 
 
@@ -1340,7 +1394,7 @@ def call_create_dataset(
     dst_root: Path,
     src_root: Path,
     *,
-    streaming_encoding: bool = True,
+    streaming_encoding: bool = False,
     encoder_threads: int | None = None,
     image_writer_threads: int = 0,
     image_writer_processes: int = 0,
@@ -1355,6 +1409,19 @@ def call_create_dataset(
     # LeRobot's create() signature changes across versions. We pass all useful
     # acceleration knobs opportunistically and keep only parameters supported by
     # the installed local version.
+    # Streaming video encoding consumes frames directly and does not need the
+    # temporary PNG writer.  In non-streaming mode every image-writer process
+    # must own at least one thread: AsyncImageWriter(processes>0, threads=0)
+    # creates processes with no workers and queue.join() hangs forever at the
+    # first save_episode().
+    if streaming_encoding:
+        image_writer_processes = 0
+        image_writer_threads = 0
+    elif image_writer_processes > 0 and image_writer_threads <= 0:
+        image_writer_threads = 1
+    elif image_writer_processes <= 0 and image_writer_threads <= 0:
+        image_writer_threads = 8
+
     candidates = {
         "repo_id": dst_repo_id,
         "root": dst_root,
@@ -1395,11 +1462,14 @@ def export_trimmed_dataset(
     overwrite: bool,
     merge_group_size: int = 1,
     *,
-    streaming_encoding: bool = True,
+    streaming_encoding: bool = False,
     encoder_threads: int | None = None,
     image_writer_threads: int = 0,
     image_writer_processes: int = 0,
     batch_encoding_size: int = 1,
+    video_codec: str = "h264",
+    video_crf: int = 23,
+    video_preset: str = "veryfast",
     regroup_after_drops: bool = False,
     drop_feature_keys: list[str] | set[str] | None = None,
     progress_cb=None,
@@ -1421,6 +1491,14 @@ def export_trimmed_dataset(
     if "return_uint8" in inspect.signature(LeRobotDataset).parameters:
         src_kwargs["return_uint8"] = True
     src = LeRobotDataset(**src_kwargs)
+    if video_codec == "h264":
+        lerobot_dataset_module.encode_video_frames = partial(
+            encode_h264_frames,
+            crf=int(video_crf),
+            preset=str(video_preset),
+        )
+    else:
+        lerobot_dataset_module.encode_video_frames = DEFAULT_LEROBOT_VIDEO_ENCODER
     drop_feature_keys_set = set(drop_feature_keys or [])
     dst = call_create_dataset(
         src,
@@ -1488,7 +1566,14 @@ def export_trimmed_dataset(
 
             for global_i in range(global_start + local_start, global_start + local_end):
                 frame = src[global_i]
-                dst.add_frame(clean_frame_for_add(frame, task_map, drop_feature_keys_set))
+                dst.add_frame(
+                    clean_frame_for_add(
+                        frame,
+                        task_map,
+                        drop_feature_keys_set,
+                        features=dst.features,
+                    )
+                )
                 processed_frames += 1
                 if progress_cb is not None and (processed_frames % 30 == 0 or processed_frames == total_export_frames):
                     progress_cb(
@@ -1505,6 +1590,12 @@ def export_trimmed_dataset(
             # saves exactly one output episode per source episode.
 
         if group_frame_count > 0:
+            if progress_cb is not None:
+                progress_cb(
+                    processed_frames,
+                    max(1, total_export_frames),
+                    f"saving/encoding output episode {len(exported)} ({group_frame_count} frames)",
+                )
             dst.save_episode()
             exported.append(
                 {
@@ -1517,6 +1608,18 @@ def export_trimmed_dataset(
 
     finalize_dataset(dst)
 
+    if video_codec == "h264":
+        info_path = dst_root / "meta" / "info.json"
+        info = json.loads(info_path.read_text(encoding="utf-8"))
+        for key, feature in info.get("features", {}).items():
+            if feature.get("dtype") != "video":
+                continue
+            feature.setdefault("info", {})["video.codec"] = "h264"
+        info_path.write_text(
+            json.dumps(info, ensure_ascii=False, indent=4),
+            encoding="utf-8",
+        )
+
     manifest = {
         "source_repo_id": src_repo_id,
         "source_root": str(src_root),
@@ -1525,6 +1628,9 @@ def export_trimmed_dataset(
         "merge_group_size": merge_group_size,
         "regroup_after_drops": bool(regroup_after_drops),
         "dropped_feature_keys": sorted(drop_feature_keys_set),
+        "video_codec": video_codec,
+        "video_crf": int(video_crf) if video_codec == "h264" else None,
+        "video_preset": video_preset if video_codec == "h264" else None,
         "exported": exported,
     }
     (dst_root / "trim_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -2564,13 +2670,45 @@ with st.expander("Export performance settings", expanded=True):
     create_parameters = set(inspect.signature(LeRobotDataset.create).parameters)
     supports_streaming = "streaming_encoding" in create_parameters
     supports_encoder_threads = "encoder_threads" in create_parameters
+    codec_col, crf_col, preset_col = st.columns(3)
+    with codec_col:
+        export_video_codec = st.selectbox(
+            "Video encoder",
+            options=("h264", "lerobot_default"),
+            index=0,
+            format_func=lambda value: (
+                "Fast H.264 / libx264" if value == "h264"
+                else "LeRobot default (usually AV1)"
+            ),
+            help=(
+                "H.264 veryfast is substantially faster for edited dataset export. "
+                "The decoded RGB frames and training modalities remain unchanged."
+            ),
+        )
+    with crf_col:
+        export_video_crf = st.number_input(
+            "H.264 CRF",
+            min_value=0,
+            max_value=51,
+            value=23,
+            step=1,
+            disabled=export_video_codec != "h264",
+        )
+    with preset_col:
+        export_video_preset = st.selectbox(
+            "H.264 preset",
+            options=("ultrafast", "superfast", "veryfast", "faster", "fast", "medium"),
+            index=2,
+            disabled=export_video_codec != "h264",
+        )
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
         export_streaming_encoding = st.checkbox(
             "Use streaming video encoding",
-            value=bool(supports_streaming),
+            value=False,
             disabled=not supports_streaming,
-            help=("Supported by this LeRobot build." if supports_streaming else
+            help=("Optional fast path; offline export may outrun its bounded queue and drop frames. "
+                  "Keep disabled for lossless dataset editing." if supports_streaming else
                   "Unavailable in this installed LeRobot build; the option was previously ignored."),
         )
     with c2:
@@ -2578,7 +2716,7 @@ with st.expander("Export performance settings", expanded=True):
             "FFmpeg encoder threads",
             min_value=0,
             max_value=64,
-            value=0,
+            value=8,
             step=1,
             disabled=not supports_encoder_threads,
             help=("0 lets the codec decide." if supports_encoder_threads else
@@ -2589,9 +2727,9 @@ with st.expander("Export performance settings", expanded=True):
             "Image writer processes",
             min_value=0,
             max_value=24,
-            value=8,
+            value=0,
             step=1,
-            help="Parallelizes decoded-frame staging. 8 is a conservative default for the 24-thread i9-12900KF.",
+            help=("Keep 0 with streaming encoding. For non-streaming export, prefer 0 processes + 8 threads."),
         )
     with c4:
         export_image_writer_threads = st.number_input(
@@ -2600,7 +2738,8 @@ with st.expander("Export performance settings", expanded=True):
             max_value=64,
             value=0,
             step=1,
-            help="Leave 0 when using image writer processes to avoid nested oversubscription.",
+            help=("Use 8 with streaming disabled and processes = 0. If processes > 0, this must be at least 1; "
+                  "processes > 0 with threads = 0 would deadlock at save_episode()."),
         )
     with c5:
         export_batch_encoding_size = st.number_input(
@@ -2613,7 +2752,8 @@ with st.expander("Export performance settings", expanded=True):
         )
     st.caption(
         "Export episodes remain sequential for dataset integrity, while frame staging uses the "
-        "selected worker processes and save_episode() encodes each episode's camera videos in parallel."
+        "selected worker processes and save_episode() encodes each episode's camera videos in parallel. "
+        "Fast H.264 uses /usr/bin/ffmpeg when available, avoiding a Conda FFmpeg without libx264."
     )
 
 def summarize_export():
@@ -2678,6 +2818,9 @@ if do_export:
                 image_writer_threads=int(export_image_writer_threads),
                 image_writer_processes=int(export_image_writer_processes),
                 batch_encoding_size=int(export_batch_encoding_size),
+                video_codec=str(export_video_codec),
+                video_crf=int(export_video_crf),
+                video_preset=str(export_video_preset),
                 regroup_after_drops=bool(regroup_after_drops),
                 drop_feature_keys=drop_feature_keys,
                 progress_cb=_progress_cb,
