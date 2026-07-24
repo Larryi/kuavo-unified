@@ -355,8 +355,6 @@ def main(config: KuavoConfig, env: gym.Env):
 
                 # 执行动作
                     observation, reward, terminated, truncated, info = env.step(numpy_action)
-                    if gripper_latch is not None:
-                        gripper_latch.advance(1)
                     if active_video_recorder is not None:
                         active_video_recorder.submit(observation)
                     if active_snapshot_uploader is not None:
