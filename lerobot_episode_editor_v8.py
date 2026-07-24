@@ -318,6 +318,18 @@ def parse_episode_id_spec(spec: str) -> list[int]:
     return sorted(ids)
 
 
+def read_episode_id_file(path: Path) -> list[int]:
+    """Read one-id-per-line or comma/range episode whitelist files."""
+    text = path.expanduser().read_text(encoding="utf-8")
+    return parse_episode_id_spec(text.replace("\r", "\n").replace("\n", ","))
+
+
+def preferred_curve_dimensions(width: int) -> list[int]:
+    """Default to TASK2 gripper dimensions, with TASK1-compatible fallback."""
+    preferred = [dim for dim in (7, 15) if dim < int(width)]
+    return preferred or list(range(min(int(width), 8)))
+
+
 def make_episode_groups(
     episode_table: pd.DataFrame,
     group_size: int,
@@ -1192,8 +1204,93 @@ def plot_metrics(metrics: pd.DataFrame, trim_start: int, trim_end: int, current_
     st.pyplot(fig, clear_figure=True)
 
 
-def clean_frame_for_add(frame: dict[str, Any], task_map: dict[int, str]) -> dict[str, Any]:
+@st.cache_data(show_spinner=False, max_entries=256)
+def load_episode_signals(root_str: str, episode_index: int) -> dict[str, Any]:
+    """Load state/action for one episode directly from parquet (no video decoding)."""
+    parts = []
+    for path in sorted((Path(root_str) / "data").glob("chunk-*/*.parquet")):
+        try:
+            names = list(pq.ParquetFile(path).schema_arrow.names) if pq is not None else []
+            wanted = [c for c in ["episode_index", "frame_index", "timestamp", "observation.state", "action"] if not names or c in names]
+            df = pd.read_parquet(path, columns=wanted)
+        except Exception:
+            df = pd.read_parquet(path)
+            keep = [c for c in ["episode_index", "frame_index", "timestamp", "observation.state", "action"] if c in df.columns]
+            df = df[keep]
+        if "episode_index" not in df.columns:
+            continue
+        hit = df.loc[pd.to_numeric(df["episode_index"], errors="coerce") == int(episode_index)]
+        if not hit.empty:
+            parts.append(hit)
+
+    if not parts:
+        return {}
+    data = pd.concat(parts, ignore_index=True)
+    sort_cols = [c for c in ["frame_index", "timestamp"] if c in data.columns]
+    if sort_cols:
+        data = data.sort_values(sort_cols).reset_index(drop=True)
+
+    result: dict[str, Any] = {}
+    result["frame"] = (pd.to_numeric(data["frame_index"], errors="coerce").to_numpy()
+                       if "frame_index" in data else np.arange(len(data)))
+    if "timestamp" in data:
+        result["time"] = pd.to_numeric(data["timestamp"], errors="coerce").to_numpy(dtype=float)
+    for key in ["observation.state", "action"]:
+        if key not in data:
+            continue
+        rows = [np.asarray(v, dtype=float).reshape(-1) for v in data[key].tolist()]
+        widths = {len(v) for v in rows}
+        if rows and len(widths) == 1 and next(iter(widths)) > 0:
+            result[key] = np.stack(rows)
+    return result
+
+
+def plot_state_action_curves(
+    signals: dict[str, Any], keys: list[str], dimensions: dict[str, list[int]],
+    trim_start: int, trim_end: int, current_frame: int, use_time_axis: bool,
+):
+    if plt is None:
+        st.error(f"matplotlib import failed: {_MATPLOTLIB_IMPORT_ERROR}")
+        return
+    x = signals.get("time") if use_time_axis and "time" in signals else signals.get("frame")
+    if x is None:
+        return
+    x = np.asarray(x)
+    xlabel = "Time (s)" if use_time_axis and "time" in signals else "Local frame"
+    panels = [(key, dimensions.get(key, [])) for key in keys if dimensions.get(key)]
+    if not panels:
+        st.info("Select at least one signal dimension.")
+        return
+    fig, axes = plt.subplots(len(panels), 1, figsize=(10, 3.0 * len(panels)), dpi=130, squeeze=False, sharex=True)
+    for ax, (key, dims) in zip(axes[:, 0], panels):
+        values = np.asarray(signals[key])
+        for dim in dims:
+            ax.plot(x, values[:, dim], linewidth=1.0, label=f"{key}[{dim}]")
+        if len(x):
+            lo = x[min(max(0, trim_start), len(x) - 1)]
+            hi = x[min(max(0, trim_end - 1), len(x) - 1)]
+            cur = x[min(max(0, current_frame), len(x) - 1)]
+            ax.axvspan(lo, hi, alpha=0.12, color="tab:green")
+            ax.axvline(cur, linestyle="--", linewidth=1.0, color="black", label="current")
+        ax.set_ylabel(key)
+        ax.grid(True, alpha=0.25)
+        ax.legend(loc="upper right", fontsize=7, ncol=min(4, len(dims) + 1))
+    axes[-1, 0].set_xlabel(xlabel)
+    fig.tight_layout()
+    st.pyplot(fig, clear_figure=True)
+
+
+def clean_frame_for_add(
+    frame: dict[str, Any],
+    task_map: dict[int, str],
+    drop_feature_keys: set[str] | None = None,
+) -> dict[str, Any]:
     new_frame = dict(frame)
+    drop_feature_keys = drop_feature_keys or set()
+
+    for key in list(new_frame.keys()):
+        if key in drop_feature_keys:
+            new_frame.pop(key, None)
 
     # LeRobotDataset.__getitem__ returns decoded images in training-friendly CHW,
     # but add_frame() expects raw HWC images. Convert image fields before validation.
@@ -1221,10 +1318,18 @@ def clean_frame_for_add(frame: dict[str, Any], task_map: dict[int, str]) -> dict
     return new_frame
 
 
-def cleaned_features_for_create(ds: LeRobotDataset) -> dict[str, Any]:
+def cleaned_features_for_create(
+    ds: LeRobotDataset,
+    drop_feature_keys: set[str] | None = None,
+) -> dict[str, Any]:
     features = dict(getattr(ds, "features", {}) or {})
+    drop_feature_keys = drop_feature_keys or set()
     for key in list(features.keys()):
-        if key in AUTO_GENERATED_KEYS or any(key.startswith(p) for p in AUTO_PREFIXES):
+        if (
+            key in drop_feature_keys
+            or key in AUTO_GENERATED_KEYS
+            or any(key.startswith(p) for p in AUTO_PREFIXES)
+        ):
             features.pop(key, None)
     return features
 
@@ -1240,11 +1345,12 @@ def call_create_dataset(
     image_writer_threads: int = 0,
     image_writer_processes: int = 0,
     batch_encoding_size: int = 1,
+    drop_feature_keys: set[str] | None = None,
 ):
     info = read_info_json(src_root)
     robot_type = getattr(getattr(src, "meta", None), "robot_type", None) or info.get("robot_type")
     fps = getattr(src, "fps", None) or info.get("fps")
-    features = cleaned_features_for_create(src)
+    features = cleaned_features_for_create(src, drop_feature_keys=drop_feature_keys)
 
     # LeRobot's create() signature changes across versions. We pass all useful
     # acceleration knobs opportunistically and keep only parameters supported by
@@ -1295,6 +1401,7 @@ def export_trimmed_dataset(
     image_writer_processes: int = 0,
     batch_encoding_size: int = 1,
     regroup_after_drops: bool = False,
+    drop_feature_keys: list[str] | set[str] | None = None,
     progress_cb=None,
 ):
     """Export a trimmed dataset.
@@ -1314,6 +1421,7 @@ def export_trimmed_dataset(
     if "return_uint8" in inspect.signature(LeRobotDataset).parameters:
         src_kwargs["return_uint8"] = True
     src = LeRobotDataset(**src_kwargs)
+    drop_feature_keys_set = set(drop_feature_keys or [])
     dst = call_create_dataset(
         src,
         dst_repo_id,
@@ -1324,6 +1432,7 @@ def export_trimmed_dataset(
         image_writer_threads=image_writer_threads,
         image_writer_processes=image_writer_processes,
         batch_encoding_size=batch_encoding_size,
+        drop_feature_keys=drop_feature_keys_set,
     )
     task_map = read_tasks(src_root)
 
@@ -1379,7 +1488,7 @@ def export_trimmed_dataset(
 
             for global_i in range(global_start + local_start, global_start + local_end):
                 frame = src[global_i]
-                dst.add_frame(clean_frame_for_add(frame, task_map))
+                dst.add_frame(clean_frame_for_add(frame, task_map, drop_feature_keys_set))
                 processed_frames += 1
                 if progress_cb is not None and (processed_frames % 30 == 0 or processed_frames == total_export_frames):
                     progress_cb(
@@ -1415,6 +1524,7 @@ def export_trimmed_dataset(
         "output_root": str(dst_root),
         "merge_group_size": merge_group_size,
         "regroup_after_drops": bool(regroup_after_drops),
+        "dropped_feature_keys": sorted(drop_feature_keys_set),
         "exported": exported,
     }
     (dst_root / "trim_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1470,6 +1580,20 @@ try:
 except Exception as exc:
     st.exception(exc)
     st.stop()
+
+# Do not leak a whitelist, selected episode, or trims from a previously opened
+# dataset into a newly rebuilt/remapped dataset in the same Streamlit session.
+active_source = str(src_root.expanduser().resolve())
+if st.session_state.get("_active_source_root") != active_source:
+    for key in (
+        "trim_config", "sampled_episode_ids", "sampled_group_indices",
+        "selected_episode", "_auto_loaded_trim_config",
+    ):
+        st.session_state.pop(key, None)
+    for key in list(st.session_state):
+        if key.startswith(("drop_episode_", "trim_slider_", "frame_slider_")):
+            st.session_state.pop(key, None)
+    st.session_state._active_source_root = active_source
 
 if "trim_config" not in st.session_state:
     st.session_state.trim_config = {}
@@ -1545,6 +1669,49 @@ with st.expander("Ignored / orphan episodes before grouping", expanded=False):
     with ig3:
         dropped_now = [int(ep) for ep, cfg in st.session_state.trim_config.items() if bool(cfg.get("drop", False))]
         st.metric("Currently dropped", len(dropped_now))
+
+with st.expander("Load an episode whitelist", expanded=False):
+    st.caption(
+        "The file may contain one episode id per line or comma-separated ids/ranges. "
+        "Applying it keeps the listed source episode ids and marks every other episode as drop."
+    )
+    whitelist_path = Path(st.text_input(
+        "Episode whitelist path",
+        value=str(
+            Path(__file__).resolve().parent
+            / "outputs/audit/task2_lowdim_quality_all/recommended_repairable_single_episodes.txt"
+        ),
+    )).expanduser()
+    if st.button("Load whitelist and drop all unlisted episodes", use_container_width=True):
+        try:
+            requested_ids = read_episode_id_file(whitelist_path)
+            available_ids = set(episode_table["episode_index"].astype(int).tolist())
+            selected_ids = [ep for ep in requested_ids if ep in available_ids]
+            missing_ids = sorted(set(requested_ids) - available_ids)
+            if not selected_ids:
+                raise ValueError("No ids from the whitelist exist in this dataset.")
+            apply_episode_subset_to_trim_config(
+                st.session_state.trim_config,
+                episode_table,
+                selected_ids,
+                drop_unselected=True,
+            )
+            for ep in available_ids:
+                st.session_state[f"drop_episode_{ep}"] = bool(
+                    st.session_state.trim_config[str(ep)].get("drop", False)
+                )
+            st.session_state.sampled_episode_ids = selected_ids
+            st.toast(
+                f"Loaded {len(selected_ids)} episodes; marked all other episodes as drop."
+            )
+            if missing_ids:
+                st.warning(
+                    f"Ignored {len(missing_ids)} ids not present in this dataset: "
+                    f"{missing_ids[:20]}" + (" ..." if len(missing_ids) > 20 else "")
+                )
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Failed to apply whitelist: {exc}")
 
 dataset_fps = get_dataset_fps(ds, src_root)
 length_table = build_length_table(episode_table, dataset_fps, st.session_state.trim_config)
@@ -2104,14 +2271,45 @@ with left:
         height=280,
     )
 
-    ep_options = episode_table["episode_index"].astype(int).tolist()
-    selected_ep = st.selectbox("Select episode", ep_options, index=0)
+    all_ep_options = episode_table["episode_index"].astype(int).tolist()
+    sampled_options = [
+        ep for ep in st.session_state.get("sampled_episode_ids", [])
+        if int(ep) in set(all_ep_options)
+    ]
+    ep_options = list(map(int, sampled_options)) if sampled_options else all_ep_options
+    if st.session_state.get("selected_episode") not in ep_options:
+        st.session_state.selected_episode = ep_options[0]
+    selected_ep = st.selectbox("Select episode", ep_options, key="selected_episode")
 
     row = episode_table.loc[episode_table["episode_index"] == selected_ep].iloc[0]
     ep_key = str(int(selected_ep))
     cfg = st.session_state.trim_config[ep_key]
 
-    cfg["drop"] = st.checkbox("Drop this episode", value=bool(cfg.get("drop", False)))
+    drop_widget_key = f"drop_episode_{ep_key}"
+    if drop_widget_key not in st.session_state:
+        st.session_state[drop_widget_key] = bool(cfg.get("drop", False))
+    cfg["drop"] = st.checkbox("Drop this episode", key=drop_widget_key)
+
+    def _review_and_advance(drop: bool):
+        current = int(st.session_state.selected_episode)
+        st.session_state.trim_config[str(current)]["drop"] = bool(drop)
+        st.session_state[f"drop_episode_{current}"] = bool(drop)
+        index = ep_options.index(current)
+        st.session_state.selected_episode = ep_options[(index + 1) % len(ep_options)]
+
+    review_ok, review_bad = st.columns(2)
+    review_ok.button(
+        "Correct: keep + next",
+        use_container_width=True,
+        on_click=_review_and_advance,
+        args=(False,),
+    )
+    review_bad.button(
+        "Incorrect: drop + next",
+        use_container_width=True,
+        on_click=_review_and_advance,
+        args=(True,),
+    )
 
     trim_range = st.slider(
         "Keep range [start, end]",
@@ -2190,6 +2388,65 @@ with right:
         st.rerun()
 
     plot_metrics(metrics, int(cfg["start"]), int(cfg["end"]), int(current_frame), metric_col)
+
+    with st.expander("State / action curves", expanded=True):
+        try:
+            signals = load_episode_signals(str(src_root), int(selected_ep))
+        except Exception as exc:
+            signals = {}
+            st.error(f"Failed to load state/action curves: {exc}")
+
+        signal_keys = [k for k in ["observation.state", "action"] if k in signals]
+        if not signal_keys:
+            st.info("No observation.state or action vectors were found for this episode.")
+        else:
+            control_col, axis_col = st.columns([3, 1])
+            with control_col:
+                if "curve_signal_keys" not in st.session_state:
+                    st.session_state.curve_signal_keys = signal_keys
+                else:
+                    st.session_state.curve_signal_keys = [
+                        key for key in st.session_state.curve_signal_keys if key in signal_keys
+                    ]
+                curve_keys = st.multiselect(
+                    "Signals", signal_keys,
+                    key="curve_signal_keys",
+                )
+            with axis_col:
+                if "curve_use_time_axis" not in st.session_state:
+                    st.session_state.curve_use_time_axis = "time" in signals
+                use_time_axis = st.checkbox(
+                    "Use time axis",
+                    disabled="time" not in signals,
+                    key="curve_use_time_axis",
+                )
+
+            selected_dims: dict[str, list[int]] = {}
+            dim_cols = st.columns(max(1, len(curve_keys)))
+            for col, key in zip(dim_cols, curve_keys):
+                width = int(np.asarray(signals[key]).shape[1])
+                widget_key = f"curve_dims_{key.replace('.', '_')}"
+                if widget_key not in st.session_state:
+                    st.session_state[widget_key] = preferred_curve_dimensions(width)
+                else:
+                    st.session_state[widget_key] = [
+                        dim for dim in st.session_state[widget_key] if int(dim) < width
+                    ]
+                with col:
+                    selected_dims[key] = st.multiselect(
+                        f"{key} dimensions",
+                        options=list(range(width)),
+                        format_func=lambda i, k=key: f"{k}[{i}]",
+                        key=widget_key,
+                        help=(
+                            "Selection persists while switching episodes. TASK2 defaults to "
+                            "gripper dimensions [7, 15]; 8D TASK1 defaults to [7]."
+                        ),
+                    )
+            plot_state_action_curves(
+                signals, curve_keys, selected_dims,
+                int(cfg["start"]), int(cfg["end"]), int(current_frame), bool(use_time_axis),
+            )
 
     sample = ds[global_start + current_frame]
     render_sample_panel(
@@ -2286,13 +2543,35 @@ st.caption(
     + f" · sampled list size: {len(st.session_state.get('sampled_episode_ids', []))}"
 )
 
+all_export_feature_keys = sorted((getattr(ds, "features", {}) or {}).keys())
+default_drop_feature_keys = [k for k in all_export_feature_keys if k.startswith("observation.depth")]
+with st.expander("Export feature filtering", expanded=True):
+    drop_feature_keys = st.multiselect(
+        "Drop feature keys from exported dataset",
+        options=all_export_feature_keys,
+        default=default_drop_feature_keys,
+        help=(
+            "Selected features are removed from the output dataset schema and from every exported frame. "
+            "For TASK2_Depth -> RGB-only, keep the default observation.depth_* selections."
+        ),
+    )
+    if drop_feature_keys:
+        st.caption("Will drop: " + ", ".join(drop_feature_keys))
+    else:
+        st.caption("No feature keys will be dropped.")
+
 with st.expander("Export performance settings", expanded=True):
-    c1, c2, c3, c4 = st.columns(4)
+    create_parameters = set(inspect.signature(LeRobotDataset.create).parameters)
+    supports_streaming = "streaming_encoding" in create_parameters
+    supports_encoder_threads = "encoder_threads" in create_parameters
+    c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
         export_streaming_encoding = st.checkbox(
             "Use streaming video encoding",
-            value=True,
-            help="Usually much faster: frames are encoded directly instead of being written as temporary PNGs and encoded at save_episode().",
+            value=bool(supports_streaming),
+            disabled=not supports_streaming,
+            help=("Supported by this LeRobot build." if supports_streaming else
+                  "Unavailable in this installed LeRobot build; the option was previously ignored."),
         )
     with c2:
         export_encoder_threads = st.number_input(
@@ -2301,26 +2580,41 @@ with st.expander("Export performance settings", expanded=True):
             max_value=64,
             value=0,
             step=1,
-            help="0 lets the codec decide. Try 4 or 8 if CPU utilization is low.",
+            disabled=not supports_encoder_threads,
+            help=("0 lets the codec decide." if supports_encoder_threads else
+                  "Unavailable in this installed LeRobot build; the option was previously ignored."),
         )
     with c3:
+        export_image_writer_processes = st.number_input(
+            "Image writer processes",
+            min_value=0,
+            max_value=24,
+            value=8,
+            step=1,
+            help="Parallelizes decoded-frame staging. 8 is a conservative default for the 24-thread i9-12900KF.",
+        )
+    with c4:
         export_image_writer_threads = st.number_input(
             "Image writer threads",
             min_value=0,
             max_value=64,
             value=0,
             step=1,
-            help="Fallback for non-streaming export. Usually leave 0 when streaming encoding is enabled.",
+            help="Leave 0 when using image writer processes to avoid nested oversubscription.",
         )
-    with c4:
+    with c5:
         export_batch_encoding_size = st.number_input(
             "Batch encoding size",
             min_value=1,
             max_value=100,
             value=1,
             step=1,
-            help="Experimental. Keep 1 unless you know your LeRobot version handles batched video finalization correctly.",
+            help="Keep 1: this LeRobot version then encodes the camera videos of each episode in parallel.",
         )
+    st.caption(
+        "Export episodes remain sequential for dataset integrity, while frame staging uses the "
+        "selected worker processes and save_episode() encodes each episode's camera videos in parallel."
+    )
 
 def summarize_export():
     rows = []
@@ -2382,9 +2676,10 @@ if do_export:
                 streaming_encoding=export_streaming_encoding,
                 encoder_threads=None if int(export_encoder_threads) <= 0 else int(export_encoder_threads),
                 image_writer_threads=int(export_image_writer_threads),
-                image_writer_processes=0,
+                image_writer_processes=int(export_image_writer_processes),
                 batch_encoding_size=int(export_batch_encoding_size),
                 regroup_after_drops=bool(regroup_after_drops),
+                drop_feature_keys=drop_feature_keys,
                 progress_cb=_progress_cb,
             )
         export_progress.progress(1.0, text="export complete")
