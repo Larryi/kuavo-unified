@@ -34,6 +34,7 @@ from kuavo_train.utils.augmenter import crop_image, resize_image, DeterministicA
 from kuavo_train.utils.utils import save_rng_state, load_rng_state
 from lerobot.policies.act.modeling_act import ACTPolicy
 from kuavo_train.utils.transforms import ImageTransforms, ImageTransformsConfig, ImageTransformConfig
+from kuavo_train.compile_utils import maybe_compile_policy
 
 from functools import partial
 from contextlib import nullcontext
@@ -397,6 +398,7 @@ def main(cfg: DictConfig):
 
     # Build policy
     policy = build_policy(cfg.policy_name, policy_cfg)
+    maybe_compile_policy(policy, cfg)
     preprocessor, postprocessor = make_pre_post_processors(policy_cfg, dataset_stats=dataset_metadata.stats)
     preprocessor.save_pretrained(output_directory)
     postprocessor.save_pretrained(output_directory)

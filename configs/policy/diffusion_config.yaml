@@ -32,6 +32,16 @@ training:
     num_workers: 8  # dataloader's num_workers. Adjust as needed per your computer's performance. Setting it too high might lock up your computer
     drop_last: False  # Whether to drop the last incomplete batch
 
+    # Optional diffusion component compilation. Start with compute_loss; eager
+    # execution remains the fallback when a selected component is unsupported.
+    torch_compile:
+      enabled: false
+      components: ["compute_loss"]
+      mode: "default"  # default, reduce-overhead, or max-autotune
+      fullgraph: false
+      dynamic: false
+      backend: null
+
     # Max training step. Used to control the learning rate adjuster. If `max_training_step` is specified, it will take precedence
     # otherwise, this value will be automatically determined based on `max_epoch` mentioned above. ONLY one of the two will take effect!
     max_training_step: null  

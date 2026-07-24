@@ -31,6 +31,7 @@ from kuavo_train.utils.utils import save_rng_state, load_rng_state
 from lerobot.policies.act.modeling_act import ACTPolicy
 from diffusers.optimization import get_scheduler
 from kuavo_train.utils.transforms import ImageTransforms, ImageTransformsConfig, ImageTransformConfig
+from kuavo_train.compile_utils import maybe_compile_policy
 
 from functools import partial
 from contextlib import nullcontext
@@ -246,6 +247,7 @@ def main(cfg: DictConfig):
     policy_cfg = build_policy_config(cfg, input_features, output_features)
     # Build policy
     policy = build_policy(cfg.policy_name, policy_cfg)
+    maybe_compile_policy(policy, cfg, log=accelerator.print)
     accelerator.wait_for_everyone()
     preprocessor, postprocessor = make_pre_post_processors(policy_cfg, dataset_stats=dataset_metadata.stats)
     if accelerator.is_main_process:
