@@ -18,7 +18,9 @@ How to use:
 import lerobot_patches.custom_patches  # Ensure custom patches are applied, DON'T REMOVE THIS LINE!
 import os
 import gc
+import inspect
 import shutil
+import time
 from pathlib import Path
 from typing import Literal
 
@@ -57,9 +59,12 @@ def setup_logging():
 class DatasetConfig:
     use_videos: bool = True
     tolerance_s: float = 0.0001
-    image_writer_processes: int = 10
-    image_writer_threads: int = 5
-    video_backend: str | None = None
+    image_writer_processes: int = 8
+    image_writer_threads: int = 1
+    video_backend: str | None = "pyav"
+    streaming_encoding: bool = True
+    encoder_threads: int = 8
+    batch_encoding_size: int = 1
 
 DEFAULT_DATASET_CONFIG = DatasetConfig()
 
@@ -157,7 +162,7 @@ def create_empty_dataset_chunked(
     if Path(LEROBOT_HOME / repo_id).exists():
         shutil.rmtree(LEROBOT_HOME / repo_id)
 
-    return LeRobotDataset.create(
+    create_kwargs = dict(
         repo_id=repo_id,
         fps=kuavo.TRAIN_HZ,
         robot_type=robot_type,
@@ -169,6 +174,13 @@ def create_empty_dataset_chunked(
         video_backend=dataset_config.video_backend,
         root=root,
     )
+
+    create_parameters = inspect.signature(LeRobotDataset.create).parameters
+    for name in ("streaming_encoding", "encoder_threads", "batch_encoding_size"):
+        if name in create_parameters:
+            create_kwargs[name] = getattr(dataset_config, name)
+
+    return LeRobotDataset.create(**create_kwargs)
 
 
 def populate_dataset_chunked(
@@ -399,19 +411,37 @@ def populate_dataset_chunked(
                 log_memory(f"After saving chunk (total frames: {frame_count[0]})")
             
             #Using chunked streaming
+            started_at = time.perf_counter()
             bag_reader.process_rosbag_chunked(
                 bag_file=str(ep_path),
                 frame_callback=on_frame,
                 chunk_size=chunk_size,
                 save_callback=on_chunk_done
             )
+            read_finished_at = time.perf_counter()
              
             #Process remaining frames
             if len(frames_buffer) > 0:
                 for frame in frames_buffer:
                     dataset.add_frame(frame, task=task)
+            flush_finished_at = time.perf_counter()
             dataset.save_episode()
-            dataset.hf_dataset = dataset.create_hf_dataset()
+            save_finished_at = time.perf_counter()
+
+            # Rebuilding the full Hugging Face dataset after every episode makes
+            # later episodes progressively slower. LeRobot finalizes it when the
+            # dataset is loaded/exported, so keep conversion append-only here.
+            log_print.info(
+                "Episode %s timing: read_align_add_chunks=%.2fs, "
+                "flush_remaining_add=%.2fs, save_episode=%.2fs, total=%.2fs, "
+                "frames=%s",
+                ep_idx,
+                read_finished_at - started_at,
+                flush_finished_at - read_finished_at,
+                save_finished_at - flush_finished_at,
+                save_finished_at - started_at,
+                frame_count[0],
+            )
             frames_buffer.clear()
             gc.collect()
             
@@ -567,7 +597,6 @@ def main(cfg: DictConfig):
 if __name__ == "__main__":
     np.random.seed(42)
     main()
-
 
 
 
