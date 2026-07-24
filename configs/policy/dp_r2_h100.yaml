@@ -1,0 +1,120 @@
+defaults:
+  - diffusion_config
+  - _self_
+
+# TASK2 repaired RGB-only dataset. Override these two variables on the rented host.
+task: r2
+method: dp_h100_rgb
+repoid: ${oc.env:TASK2_HF_REPO,local/kuavo-task2-264}
+root: ${oc.env:TASK2_DATASET_ROOT,/workspace/datasets/lerobot_task2_264}
+
+training:
+  output_directory: outputs/train/r2/dp_h100_rgb
+
+  # Keep the effective global batch at 128 for comparable 1/2/4-GPU runs:
+  # 1 GPU: 128, 2 GPUs: 64, 4 GPUs: 32 (batch_size is per process/GPU).
+  batch_size: 128
+  accumulation_steps: 1
+  num_workers: 8
+  prefetch_factor: 2
+  persistent_workers: true
+  drop_last: true
+
+  # H100 natively supports BF16. TF32 applies only to remaining FP32 matmuls.
+  mixed_precision: bf16
+  allow_tf32: true
+  # Custom DP keeps at least one trainable branch parameter outside the active
+  # loss path (observed as parameter index 64). DDP must mark it unused, or the
+  # second iteration fails while rebuilding gradient buckets.
+  ddp_find_unused_parameters: true
+
+  # After dropping the last 7 frames of 264 episodes, one nominal epoch has
+  # about 48,194 samples / global batch 128 ~= 376 optimizer steps.
+  # 120k steps is about 319 nominal epochs and is independent of GPU count.
+  max_epoch: 1000
+  max_training_step: 120000
+  save_freq_epoch: 10
+  log_freq: 10
+
+  # Enable only after a short eager smoke test. DDP compiles once per rank.
+  torch_compile:
+    enabled: false
+    components: ["compute_loss"]
+    mode: default
+    fullgraph: false
+    dynamic: false
+    backend: null
+
+  # Mild photometric/occlusion augmentation; preserve boundary objects and EEFs.
+  RGB_Augmenter:
+    enable: true
+    max_num_transforms: 1
+    random_order: true
+    tfs:
+      notransform:
+        weight: 5.0
+        type: Identity
+        kwargs: {}
+      brightness:
+        weight: 1.0
+        type: ColorJitter
+        kwargs: {brightness: [0.8, 1.2]}
+      contrast:
+        weight: 1.0
+        type: ColorJitter
+        kwargs: {contrast: [0.8, 1.2]}
+      saturation:
+        weight: 1.0
+        type: ColorJitter
+        kwargs: {saturation: [0.8, 1.2]}
+      hue:
+        weight: 0.5
+        type: ColorJitter
+        kwargs: {hue: [-0.03, 0.03]}
+      sharpness:
+        weight: 0.0
+        type: SharpnessJitter
+        kwargs: {sharpness: [0.8, 1.2]}
+      random_mask:
+        weight: 0.5
+        type: RandomMask
+        kwargs: {mask_size: [0.08, 0.08]}
+      random_border_cutout:
+        weight: 0.0
+        type: RandomBorderCutout
+        kwargs: {cut_ratio: 0.05}
+      gaussian_noise:
+        weight: 0.5
+        type: GaussianNoise
+        kwargs: {mean: 0.0, std: 0.03}
+      gamma_correction:
+        weight: 0.5
+        type: GammaCorrection
+        kwargs: {gamma: [0.85, 1.15]}
+
+policy:
+  # 0.2 s observation, 1.6 s predicted chunk, 0.8 s receding-horizon execution.
+  n_obs_steps: 2
+  horizon: 16
+  n_action_steps: 8
+  drop_n_last_frames: 7
+
+  # Mild random crop during training; evaluation becomes deterministic center crop.
+  crop_is_random: true
+  crop_shape: [456, 800]
+  use_amp: true
+  optimizer_lr: 0.0001
+  scheduler_warmup_steps: 2000
+
+  custom:
+    use_depth: false
+    resize_shape: [224, 392]
+    use_state_encoder: true
+    state_feature_dim: 128
+    use_unet: false
+    use_transformer: true
+    transformer_n_emb: 384
+    transformer_n_head: 8
+    transformer_n_layer: 12
+    transformer_dropout: 0.1
+    state_fuse: false
