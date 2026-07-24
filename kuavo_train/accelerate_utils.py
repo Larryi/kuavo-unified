@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 
@@ -34,3 +35,14 @@ def dataloader_worker_options(training_cfg: Any) -> dict[str, Any]:
             bool(training_cfg.get("persistent_workers", True)) if workers > 0 else False
         ),
     }
+
+
+def save_final_policy(accelerator: Any, policy: Any, output_directory: str | Path) -> Path | None:
+    """Save one final deployable policy on the main process."""
+
+    if not accelerator.is_main_process:
+        return None
+    checkpoint = Path(output_directory) / "epochlast"
+    accelerator.unwrap_model(policy).save_pretrained(checkpoint)
+    accelerator.print(f"Saved final deployable policy to {checkpoint}")
+    return checkpoint

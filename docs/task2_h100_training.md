@@ -152,8 +152,9 @@ CUDA_VISIBLE_DEVICES=0 accelerate launch \
 
 ## 4. Upload the deployable model
 
-The policy loader expects `epochbest/` and the preprocessing files in its
-parent directory, so upload both rather than uploading only `model.safetensors`.
+The policy loader expects the final `epochlast/` policy and the preprocessing
+files in its parent directory, so upload both rather than uploading only
+`model.safetensors`. Keep `epochbest/` as an optional validation-loss reference.
 
 ```bash
 export MODEL_REPO="$HF_USER/kuavo-task2-dp-h100"
@@ -164,7 +165,7 @@ HF_XET_HIGH_PERFORMANCE=1 hf upload \
   "$MODEL_REPO" \
   "$RUN_DIR" \
   . \
-  --include "epochbest/**" "policy_*" \
+  --include "epochlast/**" "epochbest/**" "policy_*" \
   --commit-message "train: add TASK2 DP H100 checkpoint"
 ```
 
@@ -176,5 +177,5 @@ hf download "$MODEL_REPO" \
   --max-workers 16
 ```
 
-Use `/workspace/models/kuavo-task2-dp-h100/epochbest` as the policy checkpoint;
+Use `/workspace/models/kuavo-task2-dp-h100/epochlast` as the policy checkpoint;
 keep its parent directory intact so the policy pre/post-processors are found.

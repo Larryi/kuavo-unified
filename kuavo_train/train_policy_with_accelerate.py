@@ -35,6 +35,7 @@ from kuavo_train.compile_utils import maybe_compile_policy
 from kuavo_train.accelerate_utils import (
     dataloader_worker_options,
     resolve_accelerate_options,
+    save_final_policy,
 )
 
 from functools import partial
@@ -426,6 +427,7 @@ def main(cfg: DictConfig):
 
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
+        save_final_policy(accelerator, policy, output_directory)
         writer.close()
     
     accelerator.end_training()
