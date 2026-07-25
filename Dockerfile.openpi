@@ -63,9 +63,11 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         --index-url "${PIP_INDEX_URL}" \
         --root-user-action=ignore && \
     python -c "import rospy, msgpack, websockets; from kuavo_deploy.kuavo_service.client import PolicyClient; print('OpenPI ROS client imports: OK')" && \
-    "${OPENPI_PYTHON}" -c "import jax, openpi; print('OpenPI/JAX imports: OK', jax.devices())" && \
+    "${OPENPI_PYTHON}" -c "import importlib.util, jax, openpi; assert importlib.util.find_spec('jax_plugins.xla_cuda12') is not None; print('OpenPI/JAX imports and CUDA plugin: OK')" && \
     chmod 755 /root && \
-    chmod -R a+rX /root/kuavo_data_challenge && \
+    chmod a+rx /root/kuavo_data_challenge \
+        /root/kuavo_data_challenge/third_party \
+        /root/kuavo_data_challenge/third_party/openpi-kuavo && \
     mkdir -p /root/kuavo_data_challenge/outputs && \
     chmod -R a+rwX /root/kuavo_data_challenge/kuavo_deploy \
         /root/kuavo_data_challenge/outputs && \

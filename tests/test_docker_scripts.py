@@ -84,7 +84,9 @@ def test_openpi_delivery_image_contains_ros_and_is_not_ubuntu_2204_worker() -> N
     assert "PolicyClient" in dockerfile
     assert "ubuntu22.04" not in dockerfile
     assert "chmod 755 /root" in dockerfile
-    assert "chmod -R a+rX /root/kuavo_data_challenge" in dockerfile
+    assert "jax_plugins.xla_cuda12" in dockerfile
+    assert "jax.devices()" not in dockerfile
+    assert "chmod -R a+rX /root/kuavo_data_challenge" not in dockerfile
 
 
 @pytest.mark.parametrize(
