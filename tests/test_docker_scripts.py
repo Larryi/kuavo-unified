@@ -154,7 +154,8 @@ def test_openpi_stack_launcher_does_not_eval_server_arguments() -> None:
     assert "shlex.split" in launcher
     assert "OPENPI_POLICY_CONFIG" in launcher
     assert "OPENPI_POLICY_DIR" in launcher
-    assert launcher.index('"--port=${OPENPI_PORT}"') < launcher.index("policy:checkpoint")
+    assert 'if [[ "${OPENPI_PORT}" != "8000" ]]' in launcher
+    assert 'server_argv=("--port=${OPENPI_PORT}" "${server_argv[@]}")' in launcher
     assert '"--policy.config=${OPENPI_POLICY_CONFIG}"' in launcher
     assert '"--policy.dir=${OPENPI_POLICY_DIR}"' in launcher
     assert 'bash -lc "exec scripts/kuavo_openpi' not in launcher

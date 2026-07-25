@@ -32,8 +32,12 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 cd "${REPO_ROOT}"
+# ROS/conda activation scripts may reference optional variables. Do not apply
+# this launcher's nounset policy while sourcing third-party shell code.
+set +u
 source /opt/ros/noetic/setup.bash
 source "${REPO_ROOT}/myenv/bin/activate"
+set -u
 # Prefer structured variables so shell quoting cannot silently drop required
 # Tyro options. Keep SERVER_ARGS for backwards compatibility.
 if [[ -n "${SERVER_ARGS}" ]]; then
@@ -43,11 +47,15 @@ if [[ -n "${SERVER_ARGS}" ]]; then
     )
 else
     server_argv=(
-        "--port=${OPENPI_PORT}"
         policy:checkpoint
         "--policy.config=${OPENPI_POLICY_CONFIG}"
         "--policy.dir=${OPENPI_POLICY_DIR}"
     )
+    # Port 8000 is serve_policy.py's native default. Omitting it keeps the
+    # structured startup compatible across Tyro argument-ordering versions.
+    if [[ "${OPENPI_PORT}" != "8000" ]]; then
+        server_argv=("--port=${OPENPI_PORT}" "${server_argv[@]}")
+    fi
 fi
 scripts/kuavo_openpi serve "${server_argv[@]}" >"${SERVER_LOG}" 2>&1 &
 server_pid=$!

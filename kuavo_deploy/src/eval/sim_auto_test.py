@@ -158,7 +158,10 @@ def setup_policy(pretrained_path, policy_type, cfg, device=torch.device("cuda"))
         Loaded policy model and device
     """
     
-    if device.type == 'cpu':
+    # A remote policy client performs no local Torch model inference. Its
+    # transport-side device is intentionally CPU and says nothing about the
+    # OpenPI server's JAX backend.
+    if device.type == 'cpu' and policy_type != 'client':
         log_model.warning("Warning: Using CPU for inference, this may be slow.")
         time.sleep(3)  
     
