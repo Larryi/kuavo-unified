@@ -15,14 +15,9 @@ if [[ -z "${SERVER_ARGS}" && ( -z "${OPENPI_POLICY_CONFIG}" || -z "${OPENPI_POLI
 fi
 
 server_pid=""
-client_pid=""
 cleanup() {
     local status=$?
     trap - EXIT INT TERM
-    if [[ -n "${client_pid}" ]]; then
-        kill "${client_pid}" 2>/dev/null || true
-        wait "${client_pid}" 2>/dev/null || true
-    fi
     if [[ -n "${server_pid}" ]]; then
         kill "${server_pid}" 2>/dev/null || true
         wait "${server_pid}" 2>/dev/null || true
@@ -81,6 +76,4 @@ until bash -c "</dev/tcp/127.0.0.1/${OPENPI_PORT}" 2>/dev/null; do
 done
 
 echo "OpenPI server is listening; starting ROS command: $*"
-"$@" &
-client_pid=$!
-wait "${client_pid}"
+"$@"
