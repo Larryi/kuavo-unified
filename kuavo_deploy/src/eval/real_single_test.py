@@ -127,7 +127,7 @@ stop_flag = threading.Event()
 pause_flag = threading.Event()
 
 
-def setup_policy(pretrained_path, policy_type, device=torch.device("cuda")):
+def setup_policy(pretrained_path, policy_type, cfg=None, device=torch.device("cuda")):
     """
     Set up and load the policy model.
     
@@ -144,7 +144,18 @@ def setup_policy(pretrained_path, policy_type, device=torch.device("cuda")):
         time.sleep(3)  
     
     if policy_type == 'client':
-        policy = PolicyClient()
+        policy = PolicyClient(
+            host=getattr(cfg, "client_host", "127.0.0.1"),
+            port=getattr(cfg, "client_port", 8000),
+            task_prompt=getattr(cfg, "task_prompt", "") or getattr(cfg, "task", ""),
+            api_key_env=getattr(cfg, "client_api_key_env", "KUAVO_POLICY_API_KEY"),
+            connect_timeout_s=getattr(cfg, "client_connect_timeout_s", 30.0),
+            request_timeout_s=getattr(cfg, "client_request_timeout_s", 30.0),
+            action_dim=getattr(cfg, "client_action_dim", None),
+            state_dim=getattr(cfg, "client_state_dim", None),
+            execute_steps=getattr(cfg, "client_execute_steps", 1),
+            validate_schema=getattr(cfg, "client_validate_schema", True),
+        )
         return policy
     else:
         policy, _, _ = load_policy_and_processors(pretrained_path, policy_type, device)
@@ -221,10 +232,8 @@ def main(config: KuavoConfig, env: gym.Env):
         device = torch.device(cfg.device)
 
         if policy_type == "client":
-            policy = setup_policy(pretrained_path, policy_type, device)
-            preprocessor, postprocessor = make_pre_post_processors(
-                None, Path(str(pretrained_path).split("/epoch", 1)[0])
-            )
+            policy = setup_policy(pretrained_path, policy_type, cfg, device)
+            preprocessor, postprocessor = (lambda value: value), (lambda value: value)
         else:
             policy, preprocessor, postprocessor = load_policy_and_processors(
                 pretrained_path,

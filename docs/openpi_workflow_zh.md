@@ -88,3 +88,11 @@ scripts/kuavo_openpi viewer
 命令行评测和 Viewer 会先尝试统一资产目录；若其中没有统计，则从训练
 检查点的 `assets/` 回退加载。Open-loop 输出是无 ROS 的动作诊断，不替代
 宿主机 ROS 消息、动作执行频率和真机安全验收。
+
+## ROS 侧隔离调用
+
+OpenPI server 与 ROS client 不需要共享 Python 环境。ROS 侧使用
+`configs/deploy/kuavo_env.openpi_client.yaml` 和
+`requirements_policy_client.txt`，通过兼容 OpenPI 的 msgpack WebSocket
+协议取得动作块。配置、reset/health/metadata 语义和安全默认值见
+`docs/policy_protocol_zh.md`。

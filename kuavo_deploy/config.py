@@ -187,14 +187,37 @@ class ConfigInference:
     qwen3vl_path: str = ""
     lingbot_v2_robot_name: str = "kuavo_v2"
     lingbot_v2_use_compile: bool = False
+    client_protocol: str = "msgpack_websocket"
+    client_host: str = "127.0.0.1"
+    client_port: int = 8000
+    client_connect_timeout_s: float = 30.0
+    client_request_timeout_s: float = 30.0
+    client_api_key_env: str = "KUAVO_POLICY_API_KEY"
+    client_action_dim: Optional[int] = None
+    client_state_dim: Optional[int] = None
+    client_execute_steps: int = 1
+    client_validate_schema: bool = True
 
     def validate(self):
-        if self.policy_type not in ["diffusion", "act", "lingbot", "lingbot_v2"]:
+        if self.policy_type not in ["diffusion", "act", "lingbot", "lingbot_v2", "client"]:
             #If more strategies are supported in the future, please expand here
             # Expansion room for future support for other policies
             raise ValueError(f"Unsupported policy_type '{self.policy_type}'")
         if self.device not in ["cuda", "cpu"]:
             raise ValueError("device must be 'cuda' or 'cpu'")
+        if self.client_protocol not in ["msgpack_websocket", "openpi"]:
+            raise ValueError("client_protocol must be 'msgpack_websocket' or 'openpi'")
+        if not 1 <= int(self.client_port) <= 65535:
+            raise ValueError("client_port must be in [1, 65535]")
+        if self.client_connect_timeout_s <= 0 or self.client_request_timeout_s <= 0:
+            raise ValueError("client timeouts must be positive")
+        for name, value in (
+            ("client_action_dim", self.client_action_dim),
+            ("client_state_dim", self.client_state_dim),
+            ("client_execute_steps", self.client_execute_steps),
+        ):
+            if value is not None and int(value) <= 0:
+                raise ValueError(f"{name} must be positive when set")
 
 
 # -----------------------

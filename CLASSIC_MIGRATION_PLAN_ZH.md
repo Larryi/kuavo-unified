@@ -284,12 +284,18 @@ G 阶段验收：
   `deploy.lingbot_vla_policy` / `FeatureTransform` API，并对 v1/v2
   分别固定 robot config；训练 dry-run、映射测试和 adapter 回归通过。
   完整权重加载与 ROS 真机 smoke 仍需 CUDA 宿主机验证。
-- 已实现统一 VastAI 调度工作包（待提交）：支持按 `dp`、`act`、
+- `b3b2497` 已实现统一 VastAI 调度工作包：支持按 `dp`、`act`、
   `openpi`、`lingbot-v1`、`lingbot-v2` 选择后端，分离同步源码与
   `0600` 私有环境文件，列出并下载后端所需权重，注入 HF/W&B/
   ServerChan/Vast 凭据，上传模型并按成功/失败策略停止实例。五种后端
   dry-run、密钥脱敏、SSH/SCP 参数和 LingBot-v2 资产路径共 10 项新测试
   通过；尚未连接真实 Vast 实例，云端 Gate 保持“部分通过”。
+- 已建立独立的 MessagePack WebSocket 策略协议并打通 OpenPI ROS client：
+  ROS 侧不再使用 `torch.load(weights_only=False)` 作为远程传输格式；
+  支持 metadata、infer、health、reset/reconnect、超时、动作块队列和
+  schema 校验，`policy_type=client` 已可通过部署配置加载。真实本地
+  WebSocket 往返和 OpenPI wire compatibility 测试通过；完整 JAX 权重及
+  ROS topic/真机链路仍待目标宿主机验收。
 
 因此当前分支适合作为可复现的继续集成基线，但还不是最终训练/部署
 交付版本。

@@ -129,7 +129,7 @@ def resolve_pretrained_path(cfg) -> Path:
 
 
 def build_pre_post_processors(pretrained_path: Path, policy_type: str):
-    if policy_type == "lingbot":
+    if policy_type in {"client", "lingbot", "lingbot_v2"}:
         return (lambda obs: obs), (lambda act: act)
     return make_pre_post_processors(None, Path(str(pretrained_path).split("/epoch", 1)[0]))
 
@@ -157,7 +157,18 @@ def setup_policy(pretrained_path, policy_type, cfg, device=torch.device("cuda"))
         from kuavo_train.wrapper.policy.act.ACTPolicyWrapper import CustomACTPolicyWrapper
         policy = CustomACTPolicyWrapper.from_pretrained(Path(pretrained_path), strict=True)
     elif policy_type == 'client':
-        policy = PolicyClient()
+        policy = PolicyClient(
+            host=getattr(cfg, "client_host", "127.0.0.1"),
+            port=getattr(cfg, "client_port", 8000),
+            task_prompt=getattr(cfg, "task_prompt", "") or getattr(cfg, "task", ""),
+            api_key_env=getattr(cfg, "client_api_key_env", "KUAVO_POLICY_API_KEY"),
+            connect_timeout_s=getattr(cfg, "client_connect_timeout_s", 30.0),
+            request_timeout_s=getattr(cfg, "client_request_timeout_s", 30.0),
+            action_dim=getattr(cfg, "client_action_dim", None),
+            state_dim=getattr(cfg, "client_state_dim", None),
+            execute_steps=getattr(cfg, "client_execute_steps", 1),
+            validate_schema=getattr(cfg, "client_validate_schema", True),
+        )
     elif policy_type == 'lingbot':
         from kuavo_deploy.utils.lingbot_adapter import LingbotDeployPolicy
         policy = LingbotDeployPolicy(

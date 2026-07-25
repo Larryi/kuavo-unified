@@ -4,12 +4,12 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-from kuavo_deploy.config import ConfigInference
+from kuavo_deploy.config import ConfigInference, load_kuavo_config
 from tools.open_loop_eval import parse_args
 
 
 def test_deploy_config_accepts_only_delivery_backends():
-    for policy_type in ("act", "diffusion", "lingbot", "lingbot_v2"):
+    for policy_type in ("act", "diffusion", "lingbot", "lingbot_v2", "client"):
         ConfigInference(policy_type=policy_type).validate()
 
     try:
@@ -33,6 +33,18 @@ def test_open_loop_cli_accepts_lingbot_v2():
 
     assert args.policy_type == "lingbot_v2"
     assert args.policy_path == Path("/tmp/model")
+
+
+def test_openpi_client_deploy_config_is_complete():
+    cfg = load_kuavo_config("configs/deploy/kuavo_env.openpi_client.yaml")
+    assert cfg.inference.policy_type == "client"
+    assert cfg.inference.client_protocol == "msgpack_websocket"
+    assert cfg.inference.client_action_dim == 8
+    assert cfg.inference.client_state_dim == 8
+    assert cfg.inference.client_execute_steps == 1
+    assert cfg.env.obs_key_map["head_cam_h"]["handle"]["params"]["resize_wh"] == [848, 480]
+    assert cfg.env.obs_key_map["wrist_cam_r"]["handle"]["params"]["resize_wh"] == [848, 480]
+    assert "gripper" in cfg.env.obs_key_map
 
 
 def test_open_loop_cli_rejects_smolvla():
