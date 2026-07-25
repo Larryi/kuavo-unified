@@ -3,7 +3,7 @@ set -euo pipefail
 
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly OPENPI_ROOT="${REPO_ROOT}/third_party/openpi-kuavo"
-readonly EXPECTED_OPENPI_COMMIT="8e9c6c6cca8d0cef48a4084e3a3071aa98011a48"
+readonly EXPECTED_OPENPI_COMMIT="0f807513ea607c4aa0f3c49c0b3604e5fb72883e"
 
 IMAGE_NAME="${IMAGE_NAME:-kuavo-openpi}"
 CLASSIC_BASE_IMAGE="${CLASSIC_BASE_IMAGE:-kuavo-classic:latest}"
