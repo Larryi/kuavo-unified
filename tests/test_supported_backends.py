@@ -47,6 +47,40 @@ def test_openpi_client_deploy_config_is_complete():
     assert "gripper" in cfg.env.obs_key_map
 
 
+def test_classic_task_specific_deploy_configs_match_checkpoint_features():
+    cases = (
+        (
+            "configs/deploy/kuavo_env.dp.task2.yaml",
+            "diffusion",
+            "both",
+            "leju_claw",
+            16,
+            {"head_cam_h", "wrist_cam_l", "wrist_cam_r", "joint_q", "gripper"},
+        ),
+        (
+            "configs/deploy/kuavo_env.act.task3.yaml",
+            "act",
+            "right",
+            "qiangnao",
+            8,
+            {"head_cam_h", "wrist_cam_r", "joint_q", "gripper"},
+        ),
+    )
+
+    for path, policy_type, arm, eef, expected_dim, expected_keys in cases:
+        cfg = load_kuavo_config(path)
+        state_dim = sum(
+            stop - start
+            for slices in (cfg.env.joint_q_slice, cfg.env.gripper_slice)
+            for start, stop in slices
+        )
+        assert cfg.inference.policy_type == policy_type
+        assert cfg.env.which_arm == arm
+        assert cfg.env.eef_type == eef
+        assert state_dim == expected_dim
+        assert set(cfg.env.obs_key_map) == expected_keys
+
+
 def test_open_loop_cli_rejects_smolvla():
     argv = [
         "open_loop_eval.py",

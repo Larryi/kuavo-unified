@@ -1,0 +1,32 @@
+env:
+  real: true
+  env_name: Kuavo-Real
+  control_mode: joint
+  eef_type: qiangnao
+  which_arm: right
+  only_arm: true
+  ros_rate: 10
+  image_size: [848, 480]
+  obs_key_map:
+    head_cam_h: ["/cam_h/color/image_raw/compressed", "CompressedImage", 30, [848, 480]]
+    wrist_cam_r: ["/cam_r/color/image_raw/compressed", "CompressedImage", 30, [848, 480]]
+    joint_q: ["/sensors_data_raw", "sensorsData", 500]
+    qiangnao: ["/dexhand/state", "JointState", 500]
+  arm_state_keys: [joint_q, gripper]
+  frame_alignment: false
+  ratio: 1.0
+  qiangnao_dof_needed: 1
+  is_binary: false
+
+inference:
+  policy_type: act
+  pretrained_path: "__PRETRAINED_PATH__"
+  eval_episodes: 1
+  max_episode_steps: 1000
+  seed: 42
+  start_seed: 42
+  device: cuda
+  task: task3
+  method: act
+  timestamp: container
+  epoch: best
