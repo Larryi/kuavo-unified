@@ -64,6 +64,11 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         --root-user-action=ignore && \
     python -c "import rospy, msgpack, websockets; from kuavo_deploy.kuavo_service.client import PolicyClient; print('OpenPI ROS client imports: OK')" && \
     "${OPENPI_PYTHON}" -c "import jax, openpi; print('OpenPI/JAX imports: OK', jax.devices())" && \
+    chmod 755 /root && \
+    chmod -R a+rX /root/kuavo_data_challenge && \
+    mkdir -p /root/kuavo_data_challenge/outputs && \
+    chmod -R a+rwX /root/kuavo_data_challenge/kuavo_deploy \
+        /root/kuavo_data_challenge/outputs && \
     chmod +x docker/start_openpi_ros.sh
 
 CMD ["bash"]

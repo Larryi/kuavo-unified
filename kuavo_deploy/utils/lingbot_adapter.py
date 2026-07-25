@@ -189,6 +189,70 @@ def _install_chunk_step_compat(server) -> None:
     server.infer = MethodType(infer, server)
 
 
+def _robot_feature_defaults(robot_name: str) -> tuple[list[str], list[str]]:
+    """Recover deploy feature metadata omitted by some exported checkpoints."""
+    robot_config_path = Path("configs/robot_configs") / f"{robot_name}.yaml"
+    if not robot_config_path.is_file():
+        raise FileNotFoundError(f"LingBot-v1 robot config not found: {robot_config_path}")
+    with robot_config_path.open("r", encoding="utf-8") as file:
+        robot_config = yaml.safe_load(file) or {}
+
+    joint_dims: dict[str, int] = {}
+    for category in ("states", "actions"):
+        for feature_info in robot_config.get(category, []):
+            if not isinstance(feature_info, dict):
+                continue
+            target, spec = next(iter(feature_info.items()))
+            joint = target.split("observation.state.")[-1].split("action.")[-1]
+            for origin in spec.get("origin_keys", []):
+                for span in origin.values():
+                    joint_dims[joint] = max(
+                        joint_dims.get(joint, 0),
+                        int(span["end"]) - int(span.get("start", 0)),
+                    )
+
+    cameras: list[str] = []
+    for feature_info in robot_config.get("images", []):
+        if isinstance(feature_info, dict):
+            target = next(iter(feature_info))
+        else:
+            target = str(feature_info)
+        cameras.append(target.removeprefix("observation.images."))
+
+    joints = [str({name: dim}) for name, dim in joint_dims.items()]
+    return joints, cameras
+
+
+def _split_raw_norm_stats_for_robot(
+    norm_stats: dict[str, dict[str, Any]],
+    robot_name: str,
+) -> dict[str, dict[str, Any]]:
+    """Map raw state/action statistics to robot-config target feature names."""
+    robot_config_path = Path("configs/robot_configs") / f"{robot_name}.yaml"
+    with robot_config_path.open("r", encoding="utf-8") as file:
+        robot_config = yaml.safe_load(file) or {}
+
+    mapped = dict(norm_stats)
+    for category in ("states", "actions"):
+        for feature_info in robot_config.get(category, []):
+            if not isinstance(feature_info, dict):
+                continue
+            target, spec = next(iter(feature_info.items()))
+            origins = spec.get("origin_keys", [])
+            if len(origins) != 1:
+                continue
+            origin_key, span = next(iter(origins[0].items()))
+            source_stats = norm_stats.get(origin_key)
+            if source_stats is None:
+                continue
+            start, end = int(span.get("start", 0)), int(span["end"])
+            mapped[target] = {
+                key: np.asarray(value)[start:end]
+                for key, value in source_stats.items()
+            }
+    return mapped
+
+
 class LingbotDeployPolicy:
     """Adapter that exposes LingBot-VLA inference as `select_action(obs)`."""
 
@@ -241,7 +305,23 @@ class LingbotDeployPolicy:
             robot_norm_path=self.norm_stats_file,
             use_compile=use_compile,
         )
+        joints, cameras = _robot_feature_defaults(self.robot_name)
+        if getattr(self.policy.data_config, "joints", None) is None:
+            self.policy.data_config.joints = joints
+        if getattr(self.policy.data_config, "cameras", None) is None:
+            self.policy.data_config.cameras = cameras
+        if getattr(self.policy.data_config, "norm_type", "") == "bounds_99_woclip":
+            self.policy.data_config.norm_type = "bounds_99"
         self.policy.reset(robo_name=self.robot_name)
+        transform = self.policy.vla.feature_transform
+        transform.normalizer.norm_stats = _split_raw_norm_stats_for_robot(
+            transform.normalizer.norm_stats,
+            self.robot_name,
+        )
+        transform.normalizer.norm_type = {
+            key: ("bounds_99" if value == "bounds_99_woclip" else value)
+            for key, value in transform.normalizer.norm_type.items()
+        }
         self._action_queue: list[torch.Tensor] = []
 
         action_dim = self._raw_dim_from_robot_config(robot_name, "actions", "action")

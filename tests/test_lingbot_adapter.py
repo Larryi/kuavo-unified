@@ -3,7 +3,12 @@ from types import SimpleNamespace
 import numpy as np
 import torch
 
-from kuavo_deploy.utils.lingbot_adapter import LingbotDeployPolicy, _ActionDimNormalizer
+from kuavo_deploy.utils.lingbot_adapter import (
+    LingbotDeployPolicy,
+    _ActionDimNormalizer,
+    _robot_feature_defaults,
+    _split_raw_norm_stats_for_robot,
+)
 
 
 def make_adapter(actions: np.ndarray):
@@ -100,6 +105,49 @@ def test_v1_robot_config_declares_eight_raw_dimensions():
             "observation.state",
         )
         == 8
+    )
+
+
+def test_v1_robot_config_recovers_missing_training_features():
+    joints, cameras = _robot_feature_defaults("kuavo_v1_right_arm")
+
+    assert joints == ["{'arm.position': 7}", "{'effector.position': 1}"]
+    assert cameras == ["camera_top", "camera_wrist_right"]
+
+
+def test_v1_raw_norm_stats_are_split_to_robot_features():
+    raw = {
+        "observation.state": {
+            "mean": list(range(8)),
+            "std": [1] * 8,
+            "q01": [-1] * 8,
+            "q99": [1] * 8,
+        },
+        "action": {
+            "mean": list(range(10, 18)),
+            "std": [2] * 8,
+            "q01": [-2] * 8,
+            "q99": [2] * 8,
+        },
+    }
+
+    mapped = _split_raw_norm_stats_for_robot(raw, "kuavo_v1_right_arm")
+
+    np.testing.assert_array_equal(
+        mapped["observation.state.arm.position"]["mean"],
+        np.arange(7),
+    )
+    np.testing.assert_array_equal(
+        mapped["observation.state.effector.position"]["mean"],
+        np.array([7]),
+    )
+    np.testing.assert_array_equal(
+        mapped["action.arm.position"]["mean"],
+        np.arange(10, 17),
+    )
+    np.testing.assert_array_equal(
+        mapped["action.effector.position"]["mean"],
+        np.array([17]),
     )
     assert (
         LingbotDeployPolicy._raw_dim_from_robot_config(

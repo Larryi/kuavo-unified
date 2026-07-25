@@ -83,6 +83,8 @@ def test_openpi_delivery_image_contains_ros_and_is_not_ubuntu_2204_worker() -> N
     assert "import rospy" in dockerfile
     assert "PolicyClient" in dockerfile
     assert "ubuntu22.04" not in dockerfile
+    assert "chmod 755 /root" in dockerfile
+    assert "chmod -R a+rX /root/kuavo_data_challenge" in dockerfile
 
 
 @pytest.mark.parametrize(
