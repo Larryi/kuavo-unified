@@ -1,0 +1,6 @@
+**
+!third_party/
+third_party/*
+!third_party/openpi-kuavo/
+!third_party/openpi-kuavo/**
+third_party/openpi-kuavo/.git

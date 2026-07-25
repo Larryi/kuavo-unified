@@ -279,6 +279,15 @@ G 阶段验收：
   `deploy` Python package 冲突。协议本地回环和无模型 worker fixture
   已通过；真实 checkpoint、CUDA、ROS topic 和动作执行仍需在对应
   宿主机完成 smoke，因此部署 Gate H 当前为“部分通过”。
+- I 阶段容器交付骨架已完成：OpenPI 使用固定子模块的 `uv.lock` 构建
+  自包含 JAX worker 镜像；LingBot-v1/v2 使用互相隔离的 conda-pack
+  named context，v2 明确要求 Python 3.12/PyTorch 2.8；ACT/DP 复用
+  classic 镜像。统一 runner 只读挂载权重并从运行时 env 文件读取协议
+  密钥，不再删除已有镜像/容器。LingBot-v1 镜像中原先持久化的诊断
+  密钥和写死 ROS 地址已移除。20 项脚本测试、shell 语法和三个
+  Dockerfile 的 `buildx --check` 均通过。由于当前未提供三份环境归档，
+  尚未执行完整镜像 build/import；容器内 CUDA checkpoint 推理和宿主机
+  ROS 消息闭环仍待手工验收，Gate I 为“部分通过”。
 
 后续进展：
 

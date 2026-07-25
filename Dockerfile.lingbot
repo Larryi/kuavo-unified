@@ -60,8 +60,10 @@ EOF
 
 WORKDIR /root/kuavo_data_challenge
 
-# Keep the large packed VLA environment in a cacheable layer.
-COPY myenv_lingbot.tar.gz /tmp/myenv_lingbot.tar.gz
+# Keep the large packed VLA environment outside the source build context.
+# docker/build_lingbot.sh supplies a directory containing myenv.tar.gz as
+# the BuildKit context named lingbot_env.
+COPY --from=lingbot_env /myenv.tar.gz /tmp/myenv_lingbot.tar.gz
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     mkdir -p ./myenv && \
@@ -85,6 +87,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     rm -f ./myenv_lingbot.tar.gz && \
     source ./myenv/bin/activate && \
     python -m pip install -e . --no-deps --root-user-action=ignore && \
+    python -m pip install -r requirements_policy_client.txt --root-user-action=ignore && \
     python -m pip install -e ./third_party/lerobot --no-deps --root-user-action=ignore && \
     python -m pip install -e ./third_party/lingbot-vla --no-deps --root-user-action=ignore && \
     python -c "import flash_attn, lingbotvla, torch, transformers; print(torch.__version__, transformers.__version__)" && \
@@ -101,12 +104,9 @@ ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     PATH=/root/kuavo_data_challenge/myenv/bin:/opt/conda/bin:${PATH} \
     LINGBOT_ROOT=/root/kuavo_data_challenge/third_party/lingbot-vla \
-    QWEN25_PATH=/root/kuavo_data_challenge/artifacts/lingbot/qwen25_runtime \
     PYTHONPATH=/root/kuavo_data_challenge/third_party/lingbot-vla:/opt/ros/noetic/lib/python3/dist-packages \
     HF_HUB_OFFLINE=1 \
-    TRANSFORMERS_OFFLINE=1 \
-    ROS_IP=192.168.26.10 \
-    ROS_MASTER_URI=http://kuavo_master:11311
+    TRANSFORMERS_OFFLINE=1
 
 WORKDIR /root/kuavo_data_challenge
 
@@ -125,13 +125,6 @@ COPY --from=builder /root/.condarc /root/.condarc
 COPY --from=builder /root/.pip /root/.pip
 COPY --from=builder /root/kuavo_data_challenge /root/kuavo_data_challenge
 
-# Diagnostics credentials are deliberately injected from outside the build context.
-RUN --mount=type=secret,id=kuavo_diag_env,target=/run/secrets/kuavo_diag.env \
-    test -s /run/secrets/kuavo_diag.env && \
-    mkdir -p /opt/kuavo_secrets && \
-    cp /run/secrets/kuavo_diag.env /opt/kuavo_secrets/kuavo_diag.env && \
-    chmod 600 /opt/kuavo_secrets/kuavo_diag.env
-
 RUN source /opt/ros/noetic/setup.bash && \
     source /root/kuavo_data_challenge/myenv/bin/activate && \
     python -c "import rospy, rosbag, pyaudio, cv2, gymnasium, oss2, num2words, hydra, imageio, omegaconf, sympy, tqdm, torchvision, yaml, kuavo_humanoid_sdk; from cv_bridge import CvBridge; from sensor_msgs.msg import CompressedImage, JointState; from std_msgs.msg import Bool; from std_srvs.srv import Trigger; import flash_attn, lingbotvla, torch, transformers; print('LingBot ROS runtime imports: OK')"
@@ -140,9 +133,6 @@ RUN chmod -R 777 /root/kuavo_data_challenge/kuavo_deploy && \
     echo "source /opt/ros/noetic/setup.bash" >> /root/.bashrc && \
     echo "source /root/kuavo_data_challenge/myenv/bin/activate" >> /root/.bashrc && \
     echo "export LINGBOT_ROOT=${LINGBOT_ROOT}" >> /root/.bashrc && \
-    echo "export QWEN25_PATH=${QWEN25_PATH}" >> /root/.bashrc && \
-    echo "export PYTHONPATH=${PYTHONPATH}" >> /root/.bashrc && \
-    echo "export ROS_IP=${ROS_IP}" >> /root/.bashrc && \
-    echo "export ROS_MASTER_URI=${ROS_MASTER_URI}" >> /root/.bashrc
+    echo "export PYTHONPATH=${PYTHONPATH}" >> /root/.bashrc
 
 CMD ["bash"]

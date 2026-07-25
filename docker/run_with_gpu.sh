@@ -1,36 +1,28 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-IMAGE_NAME="kdc_v0"
-CONTAINER_NAME="kdc_v0"
-IMAGE_TAR="${IMAGE_NAME}.tar"   #Image file path
+IMAGE_NAME="${IMAGE_NAME:-kdc_v0}"
+CONTAINER_NAME="${CONTAINER_NAME:-kdc_v0}"
+IMAGE_TAR="${IMAGE_TAR:-${IMAGE_NAME}.tar}"
+ROS_MASTER_URI="${ROS_MASTER_URI:-http://127.0.0.1:11311}"
+ROS_IP="${ROS_IP:-127.0.0.1}"
 
-#If the container exists, delete it first
-if [ "$(docker ps -aq -f name=${CONTAINER_NAME})" ]; then
-    echo "Container exists. Removing..."
-    docker rm -f ${CONTAINER_NAME}
+if docker container inspect "${CONTAINER_NAME}" >/dev/null 2>&1; then
+    echo "Starting existing container ${CONTAINER_NAME}; no image or container is deleted."
+    exec docker start -ai "${CONTAINER_NAME}"
 fi
 
-#Check if the image exists and delete it if it exists
-EXISTING_IMAGE=$(docker images -q $IMAGE_NAME)
-if [ "$EXISTING_IMAGE" ]; then
-    echo "Image $IMAGE_NAME already exists. Removing..."
-    docker rmi -f $IMAGE_NAME
+if ! docker image inspect "${IMAGE_NAME}:latest" >/dev/null 2>&1; then
+    if [[ ! -s "${IMAGE_TAR}" ]]; then
+        echo "Image ${IMAGE_NAME}:latest is absent and ${IMAGE_TAR} was not found." >&2
+        exit 2
+    fi
+    docker load -i "${IMAGE_TAR}"
 fi
 
-#Directly load the image
-if [ -f "$IMAGE_TAR" ]; then
-    echo "Loading image from $IMAGE_TAR..."
-    docker load -i "$IMAGE_TAR"
-else
-    echo "Error: $IMAGE_TAR not found!"
-    exit 1
-fi
-
-#Create and start a new container
-docker run --gpus all -it \
-    --net=host \
-    -e ROS_MASTER_URI=http://127.0.0.1:11311 \
-    -e ROS_IP=127.0.0.1 \
-    --name ${CONTAINER_NAME} \
-    ${IMAGE_NAME} bash
-
+exec docker run --gpus all -it \
+    --network host \
+    -e "ROS_MASTER_URI=${ROS_MASTER_URI}" \
+    -e "ROS_IP=${ROS_IP}" \
+    --name "${CONTAINER_NAME}" \
+    "${IMAGE_NAME}:latest" bash

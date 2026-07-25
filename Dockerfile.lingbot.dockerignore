@@ -22,15 +22,11 @@ raw_data/
 *.tar.gz
 *.zip
 
-# The LingBot build needs exactly this packed environment and artifact subtree.
-!myenv_lingbot.tar.gz
-artifacts/*
-!artifacts/lingbot/
-artifacts/lingbot/*
-!artifacts/lingbot/qwen25_runtime/
-!artifacts/lingbot/qwen25_runtime/**
-!artifacts/lingbot/run_20260710_024954/
-!artifacts/lingbot/run_20260710_024954/**
+# Environments, checkpoints and pretrained weights are separate build contexts
+# or read-only runtime mounts.
+artifacts/
+checkpoints/
+myenv_lingbot.tar.gz
 
 # Upload checkpoints and completed submissions must never enter the build context.
 .ossutil_checkpoint/

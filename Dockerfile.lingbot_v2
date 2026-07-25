@@ -1,0 +1,45 @@
+# syntax=docker/dockerfile:1.7
+
+FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG PIP_INDEX_URL=https://mirrors.bfsu.edu.cn/pypi/web/simple
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PATH=/opt/kuavo-env/bin:${PATH} \
+    PIP_INDEX_URL=${PIP_INDEX_URL} \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=0 \
+    LINGBOT_V2_ROOT=/opt/kuavo/third_party/lingbot-vla-v2 \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean && \
+    apt-get update && apt-get install -y --no-install-recommends \
+        build-essential ca-certificates git libgl1 libglib2.0-0 && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/kuavo
+
+# Create this archive from the upstream Python 3.12 / PyTorch 2.8 environment.
+COPY --from=lingbot_v2_env /myenv.tar.gz /tmp/myenv.tar.gz
+RUN mkdir -p /opt/kuavo-env && \
+    tar -xzf /tmp/myenv.tar.gz -C /opt/kuavo-env && \
+    rm -f /tmp/myenv.tar.gz && \
+    /opt/kuavo-env/bin/conda-unpack
+
+COPY . .
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install -e . --no-deps --root-user-action=ignore && \
+    python -m pip install -r requirements_policy_client.txt --root-user-action=ignore && \
+    python -m pip install -e ./third_party/lingbot-vla-v2 --no-deps --root-user-action=ignore && \
+    python -c "import torch, transformers, websockets; assert torch.__version__.startswith('2.8.'); print(torch.__version__, transformers.__version__, websockets.__version__)"
+
+ENTRYPOINT ["python", "tools/policy_worker.py"]
+CMD ["--help"]
