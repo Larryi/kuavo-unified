@@ -18,7 +18,9 @@ class CustomLingbotModelWrapper:
     config: CustomLingbotConfigWrapper
 
     def _infer_nproc_per_node(self) -> int:
-        env_cuda_visible = (self.config.env or {}).get("CUDA_VISIBLE_DEVICES", "").strip()
+        env_cuda_visible = str(
+            (self.config.env or {}).get("CUDA_VISIBLE_DEVICES", "")
+        ).strip()
         if env_cuda_visible:
             return len([x for x in env_cuda_visible.split(",") if x.strip()])
 

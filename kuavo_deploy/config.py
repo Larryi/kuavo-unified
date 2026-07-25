@@ -172,6 +172,8 @@ class ConfigInference:
     lingbot_norm_stats_file: str = ""
     lingbot_data_type: str = "robotwin"
     lingbot_execute_raw_action: bool = False
+    lingbot_robot_name: str = "kuavo_v1_right_arm"
+    lingbot_use_compile: bool = False
     gripper_latch_enabled: bool = False
     gripper_latch_action_indices: List[int] = field(default_factory=lambda: [7])
     gripper_latch_intent_steps: int = 5

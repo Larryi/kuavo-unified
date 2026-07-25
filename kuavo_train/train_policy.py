@@ -244,16 +244,29 @@ def _normalize_gpu_ids(gpu_ids) -> list[int]:
 
 
 def _pick_available_master_port(preferred_port: int) -> int:
-    def _can_listen(port: int) -> bool:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    def _can_listen(port: int) -> bool | None:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        except PermissionError:
+            return None
+        with sock:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 sock.bind(("0.0.0.0", port))
+            except PermissionError:
+                return None
             except OSError:
                 return False
             return True
 
-    if _can_listen(preferred_port):
+    preferred_available = _can_listen(preferred_port)
+    if preferred_available is None:
+        print(
+            f"[WARN] Cannot probe LingBot master_port in this environment; "
+            f"keeping configured port {preferred_port}"
+        )
+        return preferred_port
+    if preferred_available:
         return preferred_port
 
     for port in range(preferred_port + 1, preferred_port + 200):
@@ -294,7 +307,10 @@ def _launch_lingbot_from_policy_name(cfg: DictConfig) -> int:
     lingbot_cfg.update(legacy_cfg)
 
     configured_gpu_ids = _normalize_gpu_ids(getattr(cfg.training, "gpu_ids", []))
-    env_overrides = dict(lingbot_cfg.get("env", {}) or {})
+    env_overrides = {
+        str(key): str(value)
+        for key, value in dict(lingbot_cfg.get("env", {}) or {}).items()
+    }
     if configured_gpu_ids and "CUDA_VISIBLE_DEVICES" not in env_overrides and not os.getenv("CUDA_VISIBLE_DEVICES"):
         env_overrides["CUDA_VISIBLE_DEVICES"] = ",".join(str(x) for x in configured_gpu_ids)
     if env_overrides.get("CUDA_VISIBLE_DEVICES"):

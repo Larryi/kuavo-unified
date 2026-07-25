@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import sys
-import json
 import yaml
 from pathlib import Path
 from types import MethodType, SimpleNamespace
@@ -205,6 +204,8 @@ class LingbotDeployPolicy:
         norm_stats_file: str = "",
         data_type: str = "robotwin",
         execute_raw_action: bool = False,
+        robot_name: str = "kuavo_v1_right_arm",
+        use_compile: bool = False,
     ):
         root = _resolve_lingbot_root(lingbot_root)
         if str(root) not in sys.path:
@@ -218,85 +219,44 @@ class LingbotDeployPolicy:
         if qwen25_path:
             os.environ["QWEN25_PATH"] = qwen25_path
 
-        import deploy.lingbot_robotwin_policy as lingbot_policy_module  # type: ignore
-        from lingbotvla.data.vla_data.transform import Normalizer  # type: ignore
+        import deploy.lingbot_vla_policy as lingbot_policy_module  # type: ignore
 
-        self.model_path = str(model_path)
+        self.model_path = str(Path(model_path).expanduser().resolve())
         self.task_prompt = task_prompt or "robot manipulation"
         self.execute_raw_action = execute_raw_action
-
-        # QwenPiServer hardcodes data_type="robotwin" during its initial
-        # Normalizer construction. Kuavo checkpoints use flat LeRobot stats,
-        # so inject the configured type before model construction rather than
-        # waiting for the post-load normalizer override below.
-        upstream_normalizer = lingbot_policy_module.Normalizer
-        upstream_normalizer_init = upstream_normalizer.__init__
-
-        def compatible_normalizer_init(instance, *args, **kwargs):
-            norm_stats = kwargs.get("norm_stats", args[0] if args else {})
-            # Kuavo LeRobot stats are already flattened. Upstream LingBot
-            # otherwise forces RobotWin's split arm/effector schema here.
-            if "observation.state" in norm_stats and "action" in norm_stats:
-                kwargs["data_type"] = "customized"
-            else:
-                kwargs["data_type"] = data_type
-            upstream_normalizer_init(instance, *args, **kwargs)
-
-        upstream_normalizer.__init__ = compatible_normalizer_init
-        try:
-            self.policy = lingbot_policy_module.QwenPiServer(
-                path_to_pi_model=self.model_path,
-                use_length=use_length,
-                chunk_ret=chunk_ret,
-                use_bf16=True,
-                use_fp32=False,
+        self.robot_name = robot_name
+        del data_type  # The current upstream owns normalization through FeatureTransform.
+        candidate_norm = Path(norm_stats_file).expanduser() if norm_stats_file else Path(self.model_path) / "norm_stats.json"
+        if not candidate_norm.is_file():
+            raise FileNotFoundError(
+                "LingBot-v1 norm stats not found. Pass lingbot_norm_stats_file or ship "
+                f"{Path(self.model_path) / 'norm_stats.json'} with the checkpoint."
             )
-        finally:
-            upstream_normalizer.__init__ = upstream_normalizer_init
+        self.norm_stats_file = str(candidate_norm.resolve())
+        self.policy = lingbot_policy_module.LingbotVLAServer(
+            path_to_pi_model=self.model_path,
+            use_length=use_length,
+            use_bf16=True,
+            use_fp32=False,
+            robot_norm_path=self.norm_stats_file,
+            use_compile=use_compile,
+        )
+        self.policy.reset(robo_name=self.robot_name)
+        self._action_queue: list[torch.Tensor] = []
 
-        _install_dynamic_action_selector(self.policy.vla)
-        _install_chunk_step_compat(self.policy)
-
-        if norm_stats_file:
-            with open(norm_stats_file, "r", encoding="utf-8") as f:
-                norm_stats = json.load(f)
-            self.policy.norm_stats_file = norm_stats_file
-            action_dim = int(getattr(self.policy, "action_dim", 0))
-            action_stats = norm_stats.get("norm_stats", {}).get("action", {})
-            for key in ("q01", "q99", "mean", "std", "min", "max"):
-                if key in action_stats:
-                    action_dim = len(action_stats[key])
-                    self.policy.action_dim = action_dim
-                    self.policy.vla.action_dim = action_dim
-                    break
-            self.policy.vla.normalizer = _ActionDimNormalizer(
-                Normalizer(
-                    norm_stats=norm_stats["norm_stats"],
-                    from_file=True,
-                    data_type=data_type,
-                    norm_type={
-                        "observation.images.cam_high": "identity",
-                        "observation.images.cam_left_wrist": "identity",
-                        "observation.images.cam_right_wrist": "identity",
-                        "observation.state": getattr(
-                            self.policy.data_config, "norm_type", "bounds_99_woclip"
-                        ),
-                        "action": getattr(
-                            self.policy.data_config, "norm_type", "bounds_99_woclip"
-                        ),
-                    },
-                ),
-                action_dim=action_dim,
-            )
-
-        action_dim = int(getattr(self.policy, "action_dim", 0))
-        chunk_size = int(getattr(self.policy, "chunk_size", 1))
+        action_dim = self._raw_dim_from_robot_config(robot_name, "actions", "action")
+        state_dim = self._raw_dim_from_robot_config(
+            robot_name,
+            "states",
+            "observation.state",
+        )
+        chunk_size = int(getattr(self.policy.config, "chunk_size", use_length))
         self.config = SimpleNamespace(
             type="lingbot",
             input_features={
                 "observation.images.head_cam_h": SimpleNamespace(shape=(3, 480, 848)),
                 "observation.images.wrist_cam_r": SimpleNamespace(shape=(3, 480, 848)),
-                "observation.state": SimpleNamespace(shape=(action_dim,)),
+                "observation.state": SimpleNamespace(shape=(state_dim,)),
             },
             output_features={"action": SimpleNamespace(shape=(action_dim,))},
             image_features={
@@ -318,9 +278,32 @@ class LingbotDeployPolicy:
         return self
 
     def reset(self):
-        # Keep a stable robot name for LingBot reset semantics.
-        self.policy.reset(robo_name="kuavo")
+        self.policy.reset(robo_name=self.robot_name)
+        self._action_queue = []
         return self
+
+    @staticmethod
+    def _raw_dim_from_robot_config(robot_name: str, category: str, origin_key: str) -> int:
+        robot_config = Path("configs/robot_configs") / f"{robot_name}.yaml"
+        if not robot_config.is_file():
+            raise FileNotFoundError(f"LingBot-v1 robot config not found: {robot_config}")
+        with robot_config.open("r", encoding="utf-8") as file:
+            config = yaml.safe_load(file) or {}
+        max_end = 0
+        for feature_info in config.get(category, []):
+            if not isinstance(feature_info, dict):
+                continue
+            spec = next(iter(feature_info.values()))
+            origins = spec.get("origin_keys")
+            if isinstance(origins, str):
+                continue
+            for item in origins or []:
+                for key, span in item.items():
+                    if key == origin_key:
+                        max_end = max(max_end, int(span.get("end", 0)))
+        if max_end <= 0:
+            raise ValueError(f"Cannot infer {origin_key} dim from {robot_config}")
+        return max_end
 
     def _extract_state(self, obs: dict[str, Any]) -> np.ndarray:
         for key in ("observation.state", "state", "state.state"):
@@ -363,9 +346,9 @@ class LingbotDeployPolicy:
             right = left
 
         return {
-            "observation.images.cam_high": _to_hwc_uint8(head),
-            "observation.images.cam_left_wrist": _to_hwc_uint8(left),
-            "observation.images.cam_right_wrist": _to_hwc_uint8(right),
+            "observation.images.head_cam_h": _to_hwc_uint8(head),
+            "observation.images.wrist_cam_l": _to_hwc_uint8(left),
+            "observation.images.wrist_cam_r": _to_hwc_uint8(right),
             "observation.state": self._extract_state(observation),
             "task": self.task_prompt,
         }
@@ -389,4 +372,6 @@ class LingbotDeployPolicy:
 
     def select_action(self, observation: dict[str, Any]) -> torch.Tensor:
         """Return one action, preserving the existing real-robot deployment contract."""
-        return self._infer_actions(observation)[:1]
+        if not self._action_queue:
+            self._action_queue.extend(self._infer_actions(observation).unbind(0))
+        return self._action_queue.pop(0).unsqueeze(0)

@@ -162,6 +162,8 @@ def _policy_kwargs_for_cfg(cfg):
             "norm_stats_file": getattr(cfg, "lingbot_norm_stats_file", ""),
             "data_type": getattr(cfg, "lingbot_data_type", "robotwin"),
             "execute_raw_action": getattr(cfg, "lingbot_execute_raw_action", False),
+            "robot_name": getattr(cfg, "lingbot_robot_name", "kuavo_v1_right_arm"),
+            "use_compile": getattr(cfg, "lingbot_use_compile", False),
         }
     if cfg.policy_type == "lingbot_v2":
         return {

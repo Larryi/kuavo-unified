@@ -54,7 +54,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--norm-stats-file", default="")
     parser.add_argument("--lingbot-data-type", default="customized")
     parser.add_argument("--lingbot-use-length", type=int, default=5)
-    parser.add_argument("--robot-name", default="kuavo_v2_right_arm")
+    parser.add_argument(
+        "--robot-name",
+        default="",
+        help="Defaults to kuavo_v1_right_arm for v1 and kuavo_v2_right_arm for v2.",
+    )
     parser.add_argument("--use-compile", action="store_true")
     parser.add_argument("--episodes", type=int, nargs="*", default=[0, 1, 2, 3, 4])
     parser.add_argument("--max-frames-per-episode", type=int, default=80)
@@ -263,12 +267,14 @@ def main() -> None:
             "norm_stats_file": args.norm_stats_file,
             "data_type": args.lingbot_data_type,
             "execute_raw_action": False,
+            "robot_name": args.robot_name or "kuavo_v1_right_arm",
+            "use_compile": args.use_compile,
         }
     elif args.policy_type == "lingbot_v2":
         policy_kwargs = {
             "lingbot_v2_root": args.lingbot_root,
             "qwen3vl_path": args.qwen25_path,
-            "robot_name": args.robot_name,
+            "robot_name": args.robot_name or "kuavo_v2_right_arm",
             "task_prompt": args.task_description,
             "use_length": args.max_horizon if args.mode == "chunk" else args.lingbot_use_length,
             "chunk_ret": args.mode == "chunk",

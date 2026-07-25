@@ -484,6 +484,8 @@ def load_model(
             "norm_stats_file": norm_stats_file,
             "data_type": "customized",
             "execute_raw_action": False,
+            "robot_name": robot_name or "kuavo_v1_right_arm",
+            "use_compile": use_compile,
         }
     elif policy_type == "lingbot_v2":
         policy_kwargs = {
