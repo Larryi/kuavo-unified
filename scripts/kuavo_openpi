@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+OPENPI_ROOT="${OPENPI_ROOT:-${ROOT}/third_party/openpi-kuavo}"
+OPENPI_PYTHON="${OPENPI_PYTHON:-${OPENPI_ROOT}/.venv/bin/python}"
+OPENPI_ASSETS_BASE_DIR="${OPENPI_ASSETS_BASE_DIR:-${ROOT}/assets/openpi}"
+LEROBOT_SRC="${OPENPI_LEROBOT_SRC:-${ROOT}/third_party/lerobot/src}"
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/kuavo_openpi <command> [arguments]
+
+Commands:
+  check        Verify the isolated OpenPI runtime and pinned sources
+  norm-stats   Compute normalization stats into the unified asset directory
+  train        Run OpenPI JAX training (native config name is the first argument)
+  serve        Start the OpenPI WebSocket policy server
+  smoke        Load a Kuavo checkpoint and infer one offline dataset observation
+  open-loop    Run command-line Kuavo OpenPI open-loop evaluation
+  viewer       Start the Kuavo OpenPI Streamlit viewer
+
+Environment:
+  OPENPI_PYTHON           Python from the isolated OpenPI environment
+  OPENPI_ASSETS_BASE_DIR  Versioned normalization asset root
+  OPENPI_DATA_HOME        OpenPI download/cache root
+EOF
+}
+
+command="${1:-}"
+if [[ -z "${command}" || "${command}" == "-h" || "${command}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+shift
+
+if [[ ! -d "${OPENPI_ROOT}/src/openpi" ]]; then
+  echo "OpenPI source is missing: ${OPENPI_ROOT}" >&2
+  echo "Run: git submodule update --init third_party/openpi-kuavo" >&2
+  exit 2
+fi
+if [[ ! -x "${OPENPI_PYTHON}" ]]; then
+  echo "OpenPI Python is not executable: ${OPENPI_PYTHON}" >&2
+  echo "Create the submodule .venv or export OPENPI_PYTHON=/path/to/openpi/python." >&2
+  exit 2
+fi
+
+export OPENPI_ROOT OPENPI_PYTHON OPENPI_ASSETS_BASE_DIR
+export OPENPI_KUAVO_TASK1_ASSETS_DIR="${OPENPI_ASSETS_BASE_DIR}/pi05_kuavo"
+export OPENPI_DATA_HOME="${OPENPI_DATA_HOME:-/tmp/openpi-data}"
+export HF_HOME="${OPENPI_HF_HOME:-/tmp/openpi-hf-home}"
+export HF_DATASETS_CACHE="${OPENPI_HF_DATASETS_CACHE:-/tmp/openpi-hf-datasets}"
+export JAX_COMPILATION_CACHE_DIR="${OPENPI_JAX_CACHE_DIR:-/tmp/openpi-jax-cache}"
+export XLA_PYTHON_CLIENT_PREALLOCATE="${XLA_PYTHON_CLIENT_PREALLOCATE:-false}"
+export PYTHONPATH="${OPENPI_ROOT}/src:${LEROBOT_SRC}${PYTHONPATH:+:${PYTHONPATH}}"
+
+NVIDIA_PATHS="$("${OPENPI_PYTHON}" -c \
+  'import pathlib, nvidia; print(":".join(str(p) for r in nvidia.__path__ for p in pathlib.Path(r).glob("*/lib") if p.is_dir()))' \
+  2>/dev/null || true)"
+if [[ -n "${NVIDIA_PATHS}" ]]; then
+  export LD_LIBRARY_PATH="${NVIDIA_PATHS}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+fi
+
+cd "${OPENPI_ROOT}"
+case "${command}" in
+  check)
+    "${OPENPI_PYTHON}" -c \
+      'import jax, openpi; print("OpenPI import: OK"); print("JAX devices:", jax.devices())'
+    git status --short
+    git rev-parse HEAD
+    ;;
+  norm-stats)
+    exec "${OPENPI_PYTHON}" scripts/compute_norm_stats.py \
+      --assets-base-dir "${OPENPI_ASSETS_BASE_DIR}" "$@"
+    ;;
+  train)
+    exec "${OPENPI_PYTHON}" scripts/train.py "$@" \
+      --assets-base-dir "${OPENPI_ASSETS_BASE_DIR}"
+    ;;
+  serve)
+    exec "${OPENPI_PYTHON}" scripts/serve_policy.py "$@"
+    ;;
+  smoke)
+    exec "${OPENPI_PYTHON}" scripts/smoke_test_kuavo_policy.py "$@"
+    ;;
+  open-loop)
+    exec "${OPENPI_ROOT}/scripts/run_open_loop_kuavo.sh" "$@"
+    ;;
+  viewer)
+    exec "${OPENPI_ROOT}/scripts/run_open_loop_kuavo.sh" --viewer "$@"
+    ;;
+  *)
+    echo "Unknown command: ${command}" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
