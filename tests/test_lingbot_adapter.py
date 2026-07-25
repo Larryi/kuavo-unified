@@ -7,6 +7,7 @@ from kuavo_deploy.utils.lingbot_adapter import (
     LingbotDeployPolicy,
     _ActionDimNormalizer,
     _robot_feature_defaults,
+    _repair_policy_transform,
     _split_raw_norm_stats_for_robot,
 )
 
@@ -149,6 +150,30 @@ def test_v1_raw_norm_stats_are_split_to_robot_features():
         mapped["action.effector.position"]["mean"],
         np.array([17]),
     )
+
+
+def test_v1_transform_repair_survives_each_policy_reset():
+    raw = {
+        "observation.state": {"mean": list(range(8))},
+        "action": {"mean": list(range(10, 18))},
+    }
+    normalizer = SimpleNamespace(
+        norm_stats=raw,
+        norm_type={"action.arm.position": "bounds_99_woclip"},
+    )
+    policy = SimpleNamespace(
+        vla=SimpleNamespace(
+            feature_transform=SimpleNamespace(normalizer=normalizer),
+        )
+    )
+
+    _repair_policy_transform(policy, "kuavo_v1_right_arm")
+
+    np.testing.assert_array_equal(
+        normalizer.norm_stats["observation.state.arm.position"]["mean"],
+        np.arange(7),
+    )
+    assert normalizer.norm_type["action.arm.position"] == "bounds_99"
     assert (
         LingbotDeployPolicy._raw_dim_from_robot_config(
             "kuavo_v1_right_arm",

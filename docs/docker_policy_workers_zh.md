@@ -65,7 +65,7 @@ OpenPI 使用其原生 server 参数：
 ```bash
 BACKEND=openpi \
 MODEL_DIR=/data/openpi \
-SERVER_ARGS='policy:checkpoint --policy.config=pi05_kuavo --policy.dir=/models/checkpoint --port=8000' \
+SERVER_ARGS='--port=8000 policy:checkpoint --policy.config=pi05_kuavo --policy.dir=/models/checkpoint' \
 docker/run_policy_worker.sh
 ```
 

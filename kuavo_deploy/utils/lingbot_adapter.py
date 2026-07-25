@@ -253,6 +253,21 @@ def _split_raw_norm_stats_for_robot(
     return mapped
 
 
+def _repair_policy_transform(policy: Any, robot_name: str) -> None:
+    """Reapply checkpoint compatibility after every upstream policy reset."""
+    transform = policy.vla.feature_transform
+    if transform.normalizer is None:
+        return
+    transform.normalizer.norm_stats = _split_raw_norm_stats_for_robot(
+        transform.normalizer.norm_stats,
+        robot_name,
+    )
+    transform.normalizer.norm_type = {
+        key: ("bounds_99" if value == "bounds_99_woclip" else value)
+        for key, value in transform.normalizer.norm_type.items()
+    }
+
+
 class LingbotDeployPolicy:
     """Adapter that exposes LingBot-VLA inference as `select_action(obs)`."""
 
@@ -313,15 +328,7 @@ class LingbotDeployPolicy:
         if getattr(self.policy.data_config, "norm_type", "") == "bounds_99_woclip":
             self.policy.data_config.norm_type = "bounds_99"
         self.policy.reset(robo_name=self.robot_name)
-        transform = self.policy.vla.feature_transform
-        transform.normalizer.norm_stats = _split_raw_norm_stats_for_robot(
-            transform.normalizer.norm_stats,
-            self.robot_name,
-        )
-        transform.normalizer.norm_type = {
-            key: ("bounds_99" if value == "bounds_99_woclip" else value)
-            for key, value in transform.normalizer.norm_type.items()
-        }
+        _repair_policy_transform(self.policy, self.robot_name)
         self._action_queue: list[torch.Tensor] = []
 
         action_dim = self._raw_dim_from_robot_config(robot_name, "actions", "action")
@@ -359,6 +366,7 @@ class LingbotDeployPolicy:
 
     def reset(self):
         self.policy.reset(robo_name=self.robot_name)
+        _repair_policy_transform(self.policy, self.robot_name)
         self._action_queue = []
         return self
 

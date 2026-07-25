@@ -43,10 +43,10 @@ if [[ -n "${SERVER_ARGS}" ]]; then
     )
 else
     server_argv=(
+        "--port=${OPENPI_PORT}"
         policy:checkpoint
         "--policy.config=${OPENPI_POLICY_CONFIG}"
         "--policy.dir=${OPENPI_POLICY_DIR}"
-        "--port=${OPENPI_PORT}"
     )
 fi
 scripts/kuavo_openpi serve "${server_argv[@]}" >"${SERVER_LOG}" 2>&1 &

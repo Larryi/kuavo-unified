@@ -108,7 +108,12 @@ docker/start_openpi_ros.sh bash
 ```
 
 推荐使用上述结构化变量，避免多行 `SERVER_ARGS` 中的引号或反斜杠被当作
-参数传给 Tyro。旧的单行 `SERVER_ARGS` 仍兼容。
+参数传给 Tyro。旧的单行 `SERVER_ARGS` 仍兼容，但端口是顶层选项，必须
+写在子命令之前：
+
+```bash
+SERVER_ARGS='--port=8000 policy:checkpoint --policy.config=pi05_kuavo --policy.dir=/models/checkpoint'
+```
 
 CLI 会为本次测试生成并显示一个待检查 YAML，挂载到：
 
