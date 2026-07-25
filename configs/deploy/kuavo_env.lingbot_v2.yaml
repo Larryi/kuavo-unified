@@ -19,7 +19,19 @@ env:
   is_binary: false
 
 inference:
-  policy_type: lingbot_v2
+  # Keep ROS/KuavoBaseEnv in the Classic Python environment. The launcher
+  # starts LingBot-v2 in /opt/kuavo-env and this process connects locally.
+  policy_type: client
+  client_protocol: msgpack_websocket
+  client_host: 127.0.0.1
+  client_port: 8000
+  client_connect_timeout_s: 300
+  client_request_timeout_s: 120
+  client_api_key_env: KUAVO_POLICY_API_KEY
+  client_action_dim: 8
+  client_state_dim: 8
+  client_execute_steps: 1
+  client_validate_schema: true
   pretrained_path: "__PRETRAINED_PATH__"
   eval_episodes: 1
   max_episode_steps: 2000

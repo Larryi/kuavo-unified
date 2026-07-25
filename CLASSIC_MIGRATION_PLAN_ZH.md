@@ -294,9 +294,11 @@ G 阶段验收：
   环境归档已经生成并通过 SHA-256 校验；对应镜像已完整构建并在容器内
   识别 RTX 3090。OpenPI 单镜像也已完整构建为 Ubuntu 20.04.6/ROS
   Noetic，Classic Python 3.10/Torch CUDA 与 OpenPI Python 3.11/JAX
-  CUDA 均通过 import/GPU smoke。LingBot-v2 必须在 Ubuntu
-  22.04/glibc 2.35 的 GPU builder 上生成。真实 checkpoint 推理和
-  ROS 消息闭环仍待手工验收，Gate I 为“部分通过”。
+  CUDA 均通过 import/GPU smoke。LingBot-v2 已改为继承同一 Classic
+  ROS 镜像，独立 Python 3.12 Server 与 Classic ROS Client 通过
+  localhost 协议连接；其环境归档必须兼容 glibc 2.31，flash-attn
+  需要在带 nvcc 的 Focal builder 上源码构建。V2 镜像构建和 ROS 消息
+  闭环仍待该归档生成后验收，Gate I 为“部分通过”。
 - J 阶段自动验收已执行：OpenPI `8e9c6c` 可导入；单镜像内 JAX 已识别
   `cuda:0`，Classic Torch 已识别 RTX 3090；
   Task1 本地 LeRobot 数据可读（200 episodes、43,924 frames、10 Hz）；
@@ -311,17 +313,19 @@ G 阶段验收：
   LingBot-v1/v2、OpenPI 路由环境构建和资产校验；测试模式只读挂载
   checkpoint 并进入 shell，打印待人工审核 YAML，但不自动执行
   `script_auto_test.py`；release 才固化资产，export 才显式生成 TAR。
-  LingBot-v2 因当前镜像仍缺 ROS Noetic/KuavoBaseEnv，被安全阻止进入
-  shell/release，避免误标为最终交付可用。
+  LingBot-v2 已具备 ROS-capable 单镜像路由：启动器在独立环境启动
+  Server，再把 Classic ROS shell 留给操作者；不会自动执行
+  `script_auto_test.py`。
 - 三个最终数据集路径已确认并读取元数据：Task1 repaired 345（81,142
   frames）、Task2 repaired 264（50,042 frames，双腕相机）、Task3
   repaired 165（26,987 frames），均为 10 Hz。Docker 环境盘点确认
   classic 使用 `kdc_dev`、LingBot-v1 使用 `kdc_vla`；LingBot-v2 必须
   由固定子模块脚本新建 Python 3.12/PyTorch 2.8 环境，不能复用当前
   Torch 2.11 的 `lerobot_hil`。准确的 conda-pack 和构建命令已更新到
-  `docker/readme.md`。官方 flash-attn 2.8.3 wheel 还要求 GLIBC 2.32，
-  因此当前 glibc 2.31 主机的 LingBot-v1 保留已验证的 2.7.0.post2
-  wheel；仅在 Ubuntu 22.04/cloud 为 LingBot-v2 使用官方 2.8.3 wheel。
+  `docker/readme.md`。官方 flash-attn 2.8.3 wheel 还要求 GLIBC 2.32；
+  V2 最终镜像为 Classic/glibc 2.31，因此其 2.8.3 扩展改为在带 nvcc
+  的兼容 builder 上源码构建。LingBot-v1 继续使用已验证的
+  2.7.0.post2 wheel。
 
 后续进展：
 
@@ -330,6 +334,10 @@ G 阶段验收：
   经 MessagePack WebSocket Client 完成推理闭环。统一
   `open_loop_eval.py`/viewer 已通过隔离 Server 接入 OpenPI；Task1
   episode 0 的 3 个样本、每个 50 步、8 维动作均为有限值。
+- LingBot-v1 的真实 checkpoint ROS mock 推理已由操作者确认通过。
+  LingBot-v2 的 global-step DCP 已按训练参数（LoRA rank 8、alpha 16）
+  合并为完整 HF checkpoint，3 个 safetensors shard、1708 个键且无
+  PEFT 残留；checkpoint 内已携带可移植的 `lingbotvla_cli.yaml`。
 - `15ce694` 已把 LingBot-v1 adapter 迁移到当前
   `deploy.lingbot_vla_policy` / `FeatureTransform` API，并对 v1/v2
   分别固定 robot config；训练 dry-run、映射测试和 adapter 回归通过。

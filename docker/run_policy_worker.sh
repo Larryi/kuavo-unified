@@ -24,7 +24,7 @@ case "${BACKEND}" in
         IMAGE_NAME="${IMAGE_NAME:-kdc_real_task1_lingbot:latest}"
         ;;
     lingbot_v2)
-        IMAGE_NAME="${IMAGE_NAME:-kuavo-lingbot-v2-worker:latest}"
+        IMAGE_NAME="${IMAGE_NAME:-kuavo-lingbot-v2:latest}"
         ;;
     *)
         echo "Set BACKEND to act, diffusion, openpi, lingbot, or lingbot_v2." >&2
@@ -95,6 +95,16 @@ if [[ "${BACKEND}" == "openpi" ]]; then
         --entrypoint /root/kuavo_data_challenge/docker/start_openpi_ros.sh
         "${IMAGE_NAME}"
     )
+elif [[ "${BACKEND}" == "lingbot_v2" && "${INTERACTIVE}" == "1" ]]; then
+    docker_args+=(
+        -e "LINGBOT_V2_POLICY_DIR=${POLICY_PATH}"
+        -e "LINGBOT_V2_QWEN_DIR=${QWEN_PATH:-/assets/qwen}"
+        -e "LINGBOT_V2_NORM_STATS=${NORM_STATS_FILE:-/assets/norm_stats/norm_stats.json}"
+        -e "LINGBOT_V2_ROBOT_NAME=${ROBOT_NAME:-kuavo_v2_right_arm}"
+        --entrypoint /root/kuavo_data_challenge/docker/start_lingbot_v2_ros.sh
+        "${IMAGE_NAME}"
+        bash
+    )
 else
     worker_args=(
         tools/policy_worker.py
@@ -106,7 +116,7 @@ else
     if [[ "${BACKEND}" == "lingbot" ]]; then
         worker_args+=(--lingbot-root /root/kuavo_data_challenge/third_party/lingbot-vla)
     elif [[ "${BACKEND}" == "lingbot_v2" ]]; then
-        worker_args+=(--lingbot-root /opt/kuavo/third_party/lingbot-vla-v2)
+        worker_args+=(--lingbot-root /root/kuavo_data_challenge/third_party/lingbot-vla-v2)
     fi
     if [[ -n "${QWEN_PATH:-}" ]]; then
         worker_args+=(--qwen-path "${QWEN_PATH}")

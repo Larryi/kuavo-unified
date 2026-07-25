@@ -54,10 +54,10 @@ BACKENDS = {
         "configs/deploy/kuavo_env.lingbot.yaml", True, True,
     ),
     "lingbot-v2": BackendSpec(
-        "lingbot-v2", "lingbot_v2", "kuavo-lingbot-v2-worker:latest",
+        "lingbot-v2", "lingbot_v2", "kuavo-lingbot-v2:latest",
         "docker/build_lingbot_v2.sh", "LINGBOT_V2_ENV_ARCHIVE",
         "configs/deploy/kuavo_env.lingbot_v2.yaml",
-        qwen_required=True, norm_required=True, ros_ready=False,
+        qwen_required=True, norm_required=True,
     ),
     "openpi": BackendSpec(
         "openpi", "client", "kuavo-openpi:latest", "docker/build_openpi.sh",
@@ -407,6 +407,13 @@ def shell_command(args: argparse.Namespace, spec: BackendSpec) -> None:
             f"  OPENPI_POLICY_CONFIG={args.openpi_config} "
             f"OPENPI_POLICY_DIR={policy_path} "
             "docker/start_openpi_ros.sh bash"
+        )
+    elif spec.key == "lingbot-v2":
+        print(
+            f"  LINGBOT_V2_POLICY_DIR={policy_path} "
+            "LINGBOT_V2_QWEN_DIR=/assets/qwen "
+            "LINGBOT_V2_NORM_STATS=/assets/norm_stats/norm_stats.json "
+            "docker/start_lingbot_v2_ros.sh bash"
         )
     print(
         "  python kuavo_deploy/src/scripts/script_auto_test.py "

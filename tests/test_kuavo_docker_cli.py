@@ -38,7 +38,8 @@ def test_backend_routes_share_classic_without_merging_runtimes() -> None:
     assert BACKENDS["openpi"].image == "kuavo-openpi:latest"
     assert BACKENDS["openpi"].tokenizer_required
     assert BACKENDS["lingbot-v1"].qwen_required
-    assert not BACKENDS["lingbot-v2"].ros_ready
+    assert BACKENDS["lingbot-v2"].ros_ready
+    assert BACKENDS["lingbot-v2"].image == "kuavo-lingbot-v2:latest"
 
 
 def test_qwen_processor_bundle_does_not_require_base_weights(tmp_path: Path) -> None:
@@ -184,12 +185,23 @@ def test_release_dry_run_builds_image_without_saving_tar(tmp_path: Path) -> None
     assert "docker save" not in command_line
 
 
-def test_lingbot_v2_release_is_blocked_until_ros_image_exists() -> None:
+def test_lingbot_v2_shell_uses_ros_server_launcher(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "hf_ckpt"
+    checkpoint.mkdir()
+    (checkpoint / "model.safetensors").write_bytes(b"weights")
+    (checkpoint / "lingbotvla_cli.yaml").write_text("model: {}", encoding="utf-8")
+    qwen = tmp_path / "qwen"
+    make_qwen_processor(qwen)
+    norm = tmp_path / "norm_stats.json"
+    norm.write_text("{}", encoding="utf-8")
     result = subprocess.run(
         [
             str(ROOT / "scripts/kuavo_docker"),
-            "release",
+            "shell",
             "--backend", "lingbot-v2",
+            "--checkpoint", str(checkpoint),
+            "--qwen", str(qwen),
+            "--norm-stats", str(norm),
             "--dry-run",
         ],
         cwd=ROOT,
@@ -197,8 +209,9 @@ def test_lingbot_v2_release_is_blocked_until_ros_image_exists() -> None:
         capture_output=True,
         check=False,
     )
-    assert result.returncode == 2
-    assert "尚未包含 ROS Noetic/KuavoBaseEnv" in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert "--entrypoint bash kuavo-lingbot-v2:latest" in result.stdout
+    assert "docker/start_lingbot_v2_ros.sh bash" in result.stdout
 
 
 def test_export_is_the_only_command_that_calls_docker_save(tmp_path: Path) -> None:

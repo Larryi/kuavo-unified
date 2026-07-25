@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
-FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
+ARG CLASSIC_BASE_IMAGE=kuavo-classic:latest
+FROM ${CLASSIC_BASE_IMAGE}
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -13,18 +14,11 @@ ENV LANG=C.UTF-8 \
     PIP_INDEX_URL=${PIP_INDEX_URL} \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=0 \
-    LINGBOT_V2_ROOT=/opt/kuavo/third_party/lingbot-vla-v2 \
+    LINGBOT_V2_ROOT=/root/kuavo_data_challenge/third_party/lingbot-vla-v2 \
     HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1
 
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    rm -f /etc/apt/apt.conf.d/docker-clean && \
-    apt-get update && apt-get install -y --no-install-recommends \
-        build-essential ca-certificates git libgl1 libglib2.0-0 && \
-    rm -rf /var/lib/apt/lists/*
-
-WORKDIR /opt/kuavo
+WORKDIR /root/kuavo_data_challenge
 
 # Create this archive from the upstream Python 3.12 / PyTorch 2.8 environment.
 COPY --from=lingbot_v2_env /myenv.tar.gz /tmp/myenv.tar.gz
@@ -36,10 +30,11 @@ RUN mkdir -p /opt/kuavo-env && \
 COPY . .
 
 RUN --mount=type=cache,target=/root/.cache/pip \
-    python -m pip install -e . --no-deps --root-user-action=ignore && \
-    python -m pip install -r requirements_policy_client.txt --root-user-action=ignore && \
-    python -m pip install -e ./third_party/lingbot-vla-v2 --no-deps --root-user-action=ignore && \
-    python -c "import torch, transformers, websockets; assert torch.__version__.startswith('2.8.'); print(torch.__version__, transformers.__version__, websockets.__version__)"
+    /opt/kuavo-env/bin/python -m pip install -e . --no-deps --root-user-action=ignore && \
+    /opt/kuavo-env/bin/python -m pip install -r requirements_policy_client.txt --root-user-action=ignore && \
+    /opt/kuavo-env/bin/python -m pip install -e ./third_party/lingbot-vla-v2 --no-deps --root-user-action=ignore && \
+    /opt/kuavo-env/bin/python -c "import torch, transformers, websockets; assert torch.__version__.startswith('2.8.'); print(torch.__version__, transformers.__version__, websockets.__version__)" && \
+    bash -lc 'source /opt/ros/noetic/setup.bash && source myenv/bin/activate && python -c "import rospy; from kuavo_deploy.kuavo_env.KuavoBaseRosEnv import KuavoBaseRosEnv; print(\"LingBot-v2 ROS client imports: OK\")"'
 
-ENTRYPOINT ["python", "tools/policy_worker.py"]
+ENTRYPOINT ["/opt/kuavo-env/bin/python", "tools/policy_worker.py"]
 CMD ["--help"]

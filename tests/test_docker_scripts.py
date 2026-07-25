@@ -165,6 +165,15 @@ def test_openpi_stack_launcher_does_not_eval_server_arguments() -> None:
     assert 'bash -lc "exec scripts/kuavo_openpi' not in launcher
 
 
+def test_lingbot_v2_launcher_keeps_ros_client_in_foreground() -> None:
+    launcher = (ROOT / "docker/start_lingbot_v2_ros.sh").read_text(encoding="utf-8")
+    assert "/opt/kuavo-env/bin/python tools/policy_worker.py" in launcher
+    assert "--backend lingbot_v2" in launcher
+    assert "source /opt/ros/noetic/setup.bash" in launcher
+    assert 'source "${REPO_ROOT}/myenv/bin/activate"' in launcher
+    assert '\n"$@"\n' in launcher
+
+
 def test_lingbot_image_does_not_persist_credentials_or_ros_addresses() -> None:
     dockerfile = (ROOT / "Dockerfile.lingbot").read_text(encoding="utf-8")
     assert "kuavo_diag_env" not in dockerfile
@@ -198,4 +207,5 @@ def test_lingbot_v2_env_dry_run_resolves_wheel_after_torch() -> None:
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.index("torch==2.8.0") < result.stdout.index("flash_attn_wheel.py")
-    assert "--resume --flash-attn-wheel" in result.stdout
+    assert "--resume [--flash-attn-wheel" in result.stdout
+    assert "source build otherwise" in result.stdout

@@ -27,14 +27,20 @@ docker/build_openpi.sh  # 要求本地已有 kuavo-classic:latest
 ```
 
 LingBot-v2 的归档必须由其上游 `tools/create_train_env.sh` 创建的
-Python 3.12 / PyTorch 2.8 环境生成。构建脚本通过 BuildKit named
-context 读取归档，归档不进入源码 context。可先用 `DRY_RUN=1` 检查
-完整命令。
+Python 3.12 / PyTorch 2.8 环境生成，并与 Classic/ROS 的 glibc 2.31
+兼容。`docker/create_lingbot_v2_env.sh` 在该系统上从源码构建
+flash-attn（需要 CUDA toolkit/nvcc），在兼容 glibc 的新系统上才使用
+精确匹配的官方 wheel。构建脚本通过 BuildKit named context 读取归档，
+归档不进入源码 context。可先用 `DRY_RUN=1` 检查完整命令。
 
 OpenPI 使用固定子模块的 `uv.lock`，通过独立 BuildKit context 导入
 源码；最终镜像以 `kuavo-classic:latest` 为基础，增加 OpenPI uv 环境
 和 `docker/start_openpi_ros.sh`。因此最终只有一个 ROS-capable 镜像，
 而不是 Ubuntu 22.04 的纯推理 Worker。
+
+LingBot-v2 最终镜像也继承 `kuavo-classic:latest`。模型 Server 使用
+`/opt/kuavo-env`，ROS Client 使用 Classic `myenv`，由
+`docker/start_lingbot_v2_ros.sh` 在同一容器内管理生命周期。
 
 ## 启动模型服务
 

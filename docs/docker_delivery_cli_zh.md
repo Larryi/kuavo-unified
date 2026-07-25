@@ -54,8 +54,17 @@ OpenPI 复用已经构建的 `kuavo-classic:latest`：
 scripts/kuavo_docker build --backend openpi
 ```
 
-LingBot-v2 当前仍被标记为非 ROS-ready。CLI 允许检查其 build 路由，但会
-阻止 `shell` 和 `release`，直到镜像包含 ROS Noetic 和 KuavoBaseEnv。
+LingBot-v2 同样复用 `kuavo-classic:latest`，在镜像内增加独立的
+Python 3.12/PyTorch 2.8 Server 环境：
+
+```bash
+scripts/kuavo_docker build \
+  --backend lingbot-v2 \
+  --env-archive /mnt/pqssd/docker_envs/lingbot-v2/myenv.tar.gz
+```
+
+ROS Client 与 Server 位于同一镜像但不混装 Python 依赖。`shell` 会打印
+`docker/start_lingbot_v2_ros.sh bash`，由操作者审核 YAML 后手动执行。
 
 ## 测试阶段：只读挂载并进入 shell
 

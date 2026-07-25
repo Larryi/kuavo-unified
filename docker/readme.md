@@ -95,11 +95,11 @@ LeRobot and LingBot are editable installs on the workstation. The Dockerfiles
 reinstall their pinned source copies after unpacking.
 
 Create v2 from the pinned v2 submodule. Do not reuse `lerobot_hil`: its Python
-version is suitable, but its PyTorch version does not match LingBot-v2. Run the
-wrapper on Ubuntu 22.04/glibc 2.35 (for example, the cloud builder), not on the
-current Ubuntu 20.04/glibc 2.31 workstation. It first installs the exact Torch
-stack, resolves/downloads the official wheel from that runtime tuple, verifies
-the wheel's GLIBC symbol requirements, and then resumes upstream setup:
+version is suitable, but its PyTorch version does not match LingBot-v2. The
+archive must be compatible with the final Classic/ROS Ubuntu 20.04 image.
+On glibc 2.31, the wrapper builds flash-attn from source and therefore requires
+`nvcc`; on glibc >= 2.32 it selects the exact official wheel. Override this
+choice with `FLASH_ATTN_INSTALL_MODE=source|wheel`:
 
 ```bash
 docker/create_lingbot_v2_env.sh
@@ -112,7 +112,8 @@ conda-pack \
 
 The v2 setup script verifies `torch.cuda.is_available()`, so the builder also
 needs GPU passthrough. Driver 575.57.08/CUDA 12.9 is sufficient for the target
-Torch CUDA runtime, but a new driver does not compensate for an old glibc.
+Torch CUDA runtime. Do not package an Ubuntu 22-only environment for the
+Classic/ROS delivery image.
 
 Select flash-attn from the actual Torch runtime, not from the maximum CUDA
 version printed by `nvidia-smi`. The resolver checks Python, the Torch
@@ -206,6 +207,13 @@ Client, the Classic environment and a separate OpenPI Python 3.11/JAX
 environment. Server and ROS Client communicate over localhost in the same
 container; `--network host` exposes the container to the host ROS master and
 robot topics.
+
+LingBot-v2 follows the same deployment boundary. `kuavo-lingbot-v2:latest`
+is layered on `kuavo-classic:latest`; its Python 3.12/Torch worker lives under
+`/opt/kuavo-env`, while the ROS Noetic/KuavoBaseEnv client uses the Classic
+environment. `docker/start_lingbot_v2_ros.sh bash` starts the worker, waits for
+port 8000, then gives the operator a ROS-ready shell. It never starts
+`script_auto_test.py` automatically.
 
 ⚠️ Important:
 - Checkpoints, pretrained weights, datasets and credentials must not enter the
