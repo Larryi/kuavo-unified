@@ -26,6 +26,17 @@ def _to_numpy(value: Any) -> Any:
     return value
 
 
+def _to_wire_observation(key: str, value: Any) -> Any:
+    """Remove LeRobot's single-sample batch for the OpenPI wire protocol."""
+    value = _to_numpy(value)
+    array = np.asarray(value)
+    if key.startswith("observation.images.") and array.ndim == 4 and array.shape[0] == 1:
+        return array[0]
+    if key == "observation.state" and array.ndim == 2 and array.shape[0] == 1:
+        return array[0]
+    return value
+
+
 class PolicyClient:
     """Expose a remote action-chunk policy through ``select_action``."""
 
@@ -80,7 +91,7 @@ class PolicyClient:
     def select_action(self, observation: Mapping[str, Any]):
         if not self._actions:
             request = {
-                key: _to_numpy(value)
+                key: _to_wire_observation(key, value)
                 for key, value in observation.items()
                 if key.startswith("observation.images.") or key == "observation.state"
             }

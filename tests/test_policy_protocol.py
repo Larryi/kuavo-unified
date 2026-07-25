@@ -263,6 +263,9 @@ def test_ros_policy_client_consumes_action_chunk(monkeypatch) -> None:
         def infer(self, request):
             self.infer_calls += 1
             assert request["prompt"] == "task prompt"
+            assert request["observation.images.head_cam_h"].shape == (3, 8, 10)
+            assert request["observation.images.wrist_cam_r"].shape == (8, 10, 3)
+            assert request["observation.state"].shape == (8,)
             return {
                 "actions": np.stack(
                     [
@@ -292,6 +295,13 @@ def test_ros_policy_client_consumes_action_chunk(monkeypatch) -> None:
     )
     observation = valid_observation()
     observation.pop("prompt")
+    observation["observation.images.head_cam_h"] = observation[
+        "observation.images.head_cam_h"
+    ][None, ...]
+    observation["observation.images.wrist_cam_r"] = observation[
+        "observation.images.wrist_cam_r"
+    ][None, ...]
+    observation["observation.state"] = observation["observation.state"][None, ...]
     first = np.asarray(client.select_action(observation))
     second = np.asarray(client.select_action(observation))
     np.testing.assert_array_equal(first, np.arange(8, dtype=np.float32)[None, :])
