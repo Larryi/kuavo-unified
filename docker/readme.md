@@ -2,6 +2,10 @@
 
 This guide explains how to build a Docker image that includes ROS Noetic + Miniforge + your project code + editable third-party packages.
 
+统一的交互构建、checkpoint 只读测试挂载、release 派生镜像和显式 TAR
+导出流程见 [docker_delivery_cli_zh.md](../docs/docker_delivery_cli_zh.md)。
+测试阶段推荐使用 `scripts/kuavo_docker shell`，不会创建 TAR。
+
 ---
 
 ## 1️⃣ Configure Docker Registry Mirrors (Optional)

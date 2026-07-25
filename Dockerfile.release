@@ -1,0 +1,32 @@
+# syntax=docker/dockerfile:1.7
+
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+ARG KUAVO_BACKEND
+ARG SOURCE_IMAGE
+
+LABEL org.kuavo.backend="${KUAVO_BACKEND}" \
+      org.kuavo.source-image="${SOURCE_IMAGE}" \
+      org.kuavo.assets="embedded-runtime-only"
+
+COPY --from=checkpoint / /models/checkpoint/
+COPY --from=qwen / /assets/qwen/
+COPY --from=norm_stats / /assets/norm_stats/
+COPY --from=runtime_assets / /assets/runtime/
+COPY --from=tokenizer / /assets/tokenizer/
+COPY --from=deploy_config /kuavo_env.yaml /root/kuavo_data_challenge/configs/deploy/kuavo_env.release.yaml
+
+# Current Kuavo OpenPI configs use this historical absolute tokenizer path.
+# Keep the embedded asset canonical under /assets and provide a compatibility
+# symlink until the pinned OpenPI config accepts a runtime override.
+RUN if [ -f /assets/tokenizer/tokenizer.model ]; then \
+        mkdir -p /mnt/pqssd/pretrained/google/paligemma-3b-pt-224 && \
+        ln -sfn /assets/tokenizer/tokenizer.model \
+            /mnt/pqssd/pretrained/google/paligemma-3b-pt-224/tokenizer.model; \
+    fi
+
+# Every release image remains operator-controlled. Inspect the embedded YAML,
+# ROS addresses and topics before manually invoking script_auto_test.py.
+ENTRYPOINT []
+CMD ["bash"]

@@ -20,8 +20,8 @@ env:
 
 inference:
   policy_type: lingbot_v2
-  pretrained_path: /path/to/global_step_x/hf_ckpt
-  eval_episodes: 3
+  pretrained_path: "__PRETRAINED_PATH__"
+  eval_episodes: 1
   max_episode_steps: 2000
   seed: 42
   start_seed: 42
@@ -31,10 +31,10 @@ inference:
   timestamp: run_x
   epoch: latest
   task_prompt: Pick and place the target object
-  lingbot_v2_root: /root/kuavo_data_challenge/third_party/lingbot-vla-v2
-  qwen3vl_path: /root/kuavo_data_challenge/artifacts/lingbot_v2/qwen3_vl
+  lingbot_v2_root: /opt/kuavo/third_party/lingbot-vla-v2
+  qwen3vl_path: /assets/qwen
   lingbot_v2_robot_name: kuavo_v2_right_arm
   lingbot_v2_use_compile: false
   lingbot_use_length: 5
   lingbot_chunk_ret: false
-  lingbot_norm_stats_file: /root/kuavo_data_challenge/assets/norm_stats/kuavo_v2_right_arm_meanstd.json
+  lingbot_norm_stats_file: /assets/norm_stats/norm_stats.json

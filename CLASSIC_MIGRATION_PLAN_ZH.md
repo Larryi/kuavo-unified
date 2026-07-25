@@ -307,6 +307,12 @@ G 阶段验收：
   也已验证；真实 checkpoint 和 ROS 动作仍需操作者验收。最终硬件门禁
   和安全执行顺序已写入 `docs/delivery_validation_zh.md`，Gate J 为
   “等待 checkpoint/操作者验收”。
+- Docker 交付入口已统一为 `scripts/kuavo_docker`：按 ACT、DP、
+  LingBot-v1/v2、OpenPI 路由环境构建和资产校验；测试模式只读挂载
+  checkpoint 并进入 shell，打印待人工审核 YAML，但不自动执行
+  `script_auto_test.py`；release 才固化资产，export 才显式生成 TAR。
+  LingBot-v2 因当前镜像仍缺 ROS Noetic/KuavoBaseEnv，被安全阻止进入
+  shell/release，避免误标为最终交付可用。
 - 三个最终数据集路径已确认并读取元数据：Task1 repaired 345（81,142
   frames）、Task2 repaired 264（50,042 frames，双腕相机）、Task3
   repaired 165（26,987 frames），均为 10 Hz。Docker 环境盘点确认

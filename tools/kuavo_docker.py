@@ -1,0 +1,519 @@
+#!/usr/bin/env python3
+"""Interactive Docker build/test/release router for Kuavo policy backends."""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+from dataclasses import dataclass
+from datetime import datetime
+import os
+from pathlib import Path
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SESSION_ROOT = REPO_ROOT / "outputs" / "docker_sessions"
+WEIGHT_SUFFIXES = {".bin", ".pt", ".pth", ".safetensors", ".ckpt"}
+SENSITIVE_NAMES = {
+    ".env", "credentials.json", "secrets.json", "id_rsa", "id_ed25519",
+}
+
+
+@dataclass(frozen=True)
+class BackendSpec:
+    key: str
+    policy_type: str
+    image: str
+    build_script: str
+    archive_env: str | None
+    config: str
+    qwen_required: bool = False
+    norm_required: bool = False
+    tokenizer_required: bool = False
+    ros_ready: bool = True
+
+
+BACKENDS = {
+    "act": BackendSpec(
+        "act", "act", "kuavo-classic:latest", "docker/build_classic.sh",
+        "CLASSIC_ENV_ARCHIVE", "configs/deploy/kuavo_env.act.yaml",
+    ),
+    "dp": BackendSpec(
+        "dp", "diffusion", "kuavo-classic:latest", "docker/build_classic.sh",
+        "CLASSIC_ENV_ARCHIVE", "configs/deploy/kuavo_env.dp.yaml",
+    ),
+    "lingbot-v1": BackendSpec(
+        "lingbot-v1", "lingbot", "kdc_real_task1_lingbot:latest",
+        "docker/build_lingbot.sh", "LINGBOT_ENV_ARCHIVE",
+        "configs/deploy/kuavo_env.lingbot.yaml", True, True,
+    ),
+    "lingbot-v2": BackendSpec(
+        "lingbot-v2", "lingbot_v2", "kuavo-lingbot-v2-worker:latest",
+        "docker/build_lingbot_v2.sh", "LINGBOT_V2_ENV_ARCHIVE",
+        "configs/deploy/kuavo_env.lingbot_v2.yaml",
+        qwen_required=True, norm_required=True, ros_ready=False,
+    ),
+    "openpi": BackendSpec(
+        "openpi", "client", "kuavo-openpi:latest", "docker/build_openpi.sh",
+        None, "configs/deploy/kuavo_env.openpi_client.yaml",
+        tokenizer_required=True,
+    ),
+}
+
+
+class UsageError(RuntimeError):
+    pass
+
+
+def quote_command(command: list[str]) -> str:
+    return shlex.join(command)
+
+
+def run(command: list[str], *, dry_run: bool, env: dict[str, str] | None = None) -> None:
+    print(f"+ {quote_command(command)}")
+    if not dry_run:
+        subprocess.run(command, cwd=REPO_ROOT, env=env, check=True)
+
+
+def prompt_choice(title: str, choices: list[str]) -> str:
+    if not sys.stdin.isatty():
+        raise UsageError(f"{title} is required in non-interactive mode")
+    print(title)
+    for index, choice in enumerate(choices, 1):
+        print(f"  {index}) {choice}")
+    while True:
+        answer = input("> ").strip()
+        if answer in choices:
+            return answer
+        if answer.isdigit() and 1 <= int(answer) <= len(choices):
+            return choices[int(answer) - 1]
+        print("请输入编号或完整名称。")
+
+
+def prompt_path(title: str, current: str | None = None) -> str:
+    if current:
+        return current
+    if not sys.stdin.isatty():
+        raise UsageError(f"{title} is required in non-interactive mode")
+    return input(f"{title}: ").strip()
+
+
+def confirm_action(message: str, *, yes: bool, dry_run: bool) -> None:
+    if dry_run or yes:
+        return
+    if not sys.stdin.isatty():
+        raise UsageError(f"非交互执行必须显式传入 --yes：{message}")
+    answer = input(f"{message} [y/N] ").strip().lower()
+    if answer not in {"y", "yes"}:
+        raise UsageError("操作者已取消")
+
+
+def resolve_existing(path: str, *, kind: str, directory: bool = False) -> Path:
+    candidate = Path(path).expanduser().resolve()
+    valid = candidate.is_dir() if directory else candidate.exists()
+    if not valid:
+        raise UsageError(f"{kind}不存在或类型不正确: {candidate}")
+    return candidate
+
+
+def nonempty_directory(path: Path, label: str) -> None:
+    if not any(path.iterdir()):
+        raise UsageError(f"{label}目录为空: {path}")
+
+
+def validate_qwen_bundle(path: Path) -> list[str]:
+    errors: list[str] = []
+    if not (path / "config.json").is_file():
+        errors.append("缺少 config.json")
+    if not any((path / name).is_file() for name in (
+        "tokenizer.json", "tokenizer.model", "vocab.json",
+    )):
+        errors.append("缺少 tokenizer.json/tokenizer.model/vocab.json")
+    if not any((path / name).is_file() for name in (
+        "preprocessor_config.json", "processor_config.json",
+        "image_processor_config.json",
+    )):
+        errors.append("缺少图像 processor 配置")
+    if errors:
+        raise UsageError(f"Qwen processor bundle 无效 ({path}): " + "；".join(errors))
+
+    warnings: list[str] = []
+    weights = [
+        item for item in path.rglob("*")
+        if item.is_file() and (
+            item.suffix.lower() in WEIGHT_SUFFIXES
+            or item.name.startswith("model-") and item.name.endswith(".safetensors")
+        )
+    ]
+    if weights:
+        size = sum(item.stat().st_size for item in weights)
+        warnings.append(
+            f"Qwen 目录含 {len(weights)} 个权重文件（约 {size / 2**30:.1f} GiB）。"
+            "完整 LingBot HF checkpoint 推理通常只需 config/tokenizer/processor；"
+            "CLI 不会自动删除这些文件。"
+        )
+    return warnings
+
+
+def validate_checkpoint(spec: BackendSpec, path: Path) -> list[str]:
+    nonempty_directory(path, "checkpoint")
+    warnings: list[str] = []
+    files = [item for item in path.rglob("*") if item.is_file()]
+    if spec.key in {"lingbot-v1", "lingbot-v2"}:
+        if not any(item.suffix == ".safetensors" for item in files):
+            raise UsageError(
+                "LingBot 部署 checkpoint 未发现 safetensors；"
+                "LoRA/DCP 必须先合并导出为完整 HF checkpoint。"
+            )
+        if spec.key == "lingbot-v1" and not (path / "lingbotvla_cli.yaml").is_file():
+            raise UsageError("LingBot-v1 hf_ckpt 缺少 lingbotvla_cli.yaml")
+        if spec.key == "lingbot-v2":
+            ancestors = (path, *path.parents[:4])
+            if not any((parent / "lingbotvla_cli.yaml").is_file() for parent in ancestors):
+                raise UsageError(
+                    "LingBot-v2 checkpoint 或其上级目录缺少 lingbotvla_cli.yaml；"
+                    "打包前需要保留训练配置。"
+                )
+    elif spec.key in {"act", "dp"}:
+        processor_names = {"policy_preprocessor.json", "policy_postprocessor.json"}
+        visible = {item.name for item in files}
+        missing = processor_names - visible
+        if missing:
+            warnings.append(
+                "checkpoint bundle 中未发现 "
+                + ", ".join(sorted(missing))
+                + "；请把包含 processor 文件的训练目录作为 --checkpoint，"
+                  "并用 --checkpoint-subpath 指向实际权重目录。"
+            )
+    elif spec.key == "openpi":
+        if not any(item.name == "_METADATA" for item in files):
+            warnings.append("未发现 Orbax _METADATA；请确认这是可部署的 OpenPI checkpoint。")
+    return warnings
+
+
+def reject_sensitive_files(paths: list[Path | None]) -> None:
+    matches: list[Path] = []
+    for root in paths:
+        if root is None:
+            continue
+        candidates = [root] if root.is_file() else root.rglob("*")
+        for item in candidates:
+            if not item.is_file():
+                continue
+            lowered_parts = {part.lower() for part in item.parts}
+            if (
+                item.name.lower() in SENSITIVE_NAMES
+                or item.suffix.lower() in {".pem", ".key"}
+                or lowered_parts.intersection({".ssh", "secrets"})
+            ):
+                matches.append(item)
+    if matches:
+        shown = ", ".join(str(path) for path in matches[:5])
+        raise UsageError(
+            f"release 资产中发现疑似凭据/私钥文件，已拒绝构建: {shown}"
+        )
+
+
+def ensure_ros_ready(spec: BackendSpec, operation: str) -> None:
+    if not spec.ros_ready and operation in {"shell", "release"}:
+        raise UsageError(
+            "LingBot-v2 当前仍是纯 Worker 镜像，尚未包含 ROS Noetic/KuavoBaseEnv；"
+            f"已阻止 {operation}，避免误认为可最终交付。"
+        )
+
+
+def checkpoint_container_path(subpath: str) -> str:
+    cleaned = subpath.strip().strip("/")
+    if ".." in Path(cleaned).parts:
+        raise UsageError("--checkpoint-subpath 不能包含 '..'")
+    return "/models/checkpoint" + (f"/{cleaned}" if cleaned else "")
+
+
+def render_config(
+    source: Path,
+    destination: Path,
+    *,
+    pretrained_path: str,
+) -> None:
+    text = source.read_text(encoding="utf-8")
+    if "__PRETRAINED_PATH__" in text:
+        text = text.replace("__PRETRAINED_PATH__", pretrained_path)
+    elif "pretrained_path:" in text and pretrained_path not in text:
+        raise UsageError(
+            f"自定义配置 {source} 的 pretrained_path 未指向 {pretrained_path}，"
+            "请使用 __PRETRAINED_PATH__ 占位符或容器内路径。"
+        )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(text, encoding="utf-8")
+
+
+def collect_assets(
+    args: argparse.Namespace,
+    spec: BackendSpec,
+) -> tuple[Path, Path | None, Path | None, Path | None, Path | None]:
+    checkpoint = resolve_existing(
+        prompt_path("Checkpoint bundle 路径", args.checkpoint),
+        kind="checkpoint", directory=True,
+    )
+    warnings = validate_checkpoint(spec, checkpoint)
+
+    qwen: Path | None = None
+    if spec.qwen_required:
+        qwen = resolve_existing(
+            prompt_path("Qwen processor bundle 路径", args.qwen),
+            kind="Qwen processor", directory=True,
+        )
+        warnings.extend(validate_qwen_bundle(qwen))
+
+    norm: Path | None = None
+    if spec.norm_required:
+        norm = resolve_existing(
+            prompt_path("norm_stats.json 路径", args.norm_stats),
+            kind="norm stats",
+        )
+        if not norm.is_file():
+            raise UsageError(f"norm stats 必须是文件: {norm}")
+
+    runtime_assets: Path | None = None
+    if args.runtime_assets:
+        runtime_assets = resolve_existing(
+            args.runtime_assets, kind="runtime assets", directory=True,
+        )
+
+    tokenizer: Path | None = None
+    if spec.tokenizer_required:
+        tokenizer = resolve_existing(
+            prompt_path("PaliGemma tokenizer.model 路径", args.tokenizer),
+            kind="OpenPI tokenizer",
+        )
+        if not tokenizer.is_file():
+            raise UsageError(f"OpenPI tokenizer 必须是文件: {tokenizer}")
+
+    for warning in warnings:
+        print(f"警告: {warning}", file=sys.stderr)
+    return checkpoint, qwen, norm, runtime_assets, tokenizer
+
+
+def build_command(args: argparse.Namespace, spec: BackendSpec) -> None:
+    environment = os.environ.copy()
+    if spec.archive_env:
+        archive_value = prompt_path(
+            f"{spec.archive_env} (myenv.tar.gz)",
+            args.env_archive or environment.get(spec.archive_env),
+        )
+        archive = resolve_existing(archive_value, kind=spec.archive_env)
+        if archive.name != "myenv.tar.gz":
+            raise UsageError(f"{spec.archive_env} 文件名必须是 myenv.tar.gz")
+        environment[spec.archive_env] = str(archive)
+    run([str(REPO_ROOT / spec.build_script)], dry_run=args.dry_run, env=environment)
+
+
+def prepare_session_config(
+    args: argparse.Namespace,
+    spec: BackendSpec,
+    pretrained_path: str,
+) -> Path:
+    source = resolve_existing(
+        args.config or str(REPO_ROOT / spec.config),
+        kind="deploy config",
+    )
+    if args.dry_run:
+        return Path("/planned/kuavo_env.yaml")
+    session = SESSION_ROOT / f"{spec.key}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    destination = session / "kuavo_env.yaml"
+    render_config(source, destination, pretrained_path=pretrained_path)
+    return destination
+
+
+def shell_command(args: argparse.Namespace, spec: BackendSpec) -> None:
+    ensure_ros_ready(spec, "shell")
+    checkpoint, qwen, norm, runtime_assets, tokenizer = collect_assets(args, spec)
+    policy_path = checkpoint_container_path(args.checkpoint_subpath)
+    config = prepare_session_config(args, spec, policy_path)
+
+    command = [
+        "docker", "run", "--rm", "-it", "--init",
+        "--name", args.container_name or f"kuavo-{spec.key}-test",
+        "--network", "host", "--gpus", args.gpus,
+        "-v", f"{checkpoint}:/models/checkpoint:ro",
+        "-v", f"{config}:/run/kuavo/kuavo_env.yaml:ro",
+    ]
+    if qwen:
+        command += ["-v", f"{qwen}:/assets/qwen:ro"]
+    if norm:
+        command += ["-v", f"{norm}:/assets/norm_stats/norm_stats.json:ro"]
+    if runtime_assets:
+        command += ["-v", f"{runtime_assets}:/assets/runtime:ro"]
+    if tokenizer:
+        command += [
+            "-v",
+            f"{tokenizer}:/mnt/pqssd/pretrained/google/paligemma-3b-pt-224/tokenizer.model:ro",
+        ]
+    command += ["--entrypoint", "bash", args.image or spec.image]
+
+    print(f"待人工检查 YAML: {config}")
+    if not args.dry_run:
+        print("----- kuavo_env.yaml -----")
+        print(config.read_text(encoding="utf-8").rstrip())
+        print("--------------------------")
+    print("容器内人工推理命令:")
+    if spec.key == "openpi":
+        print(
+            "  export SERVER_ARGS='policy:checkpoint "
+            f"--policy.config={args.openpi_config} "
+            f"--policy.dir={policy_path} --port=8000'"
+        )
+        print("  docker/start_openpi_ros.sh bash")
+    print(
+        "  python kuavo_deploy/src/scripts/script_auto_test.py "
+        "--task auto_test --config /run/kuavo/kuavo_env.yaml"
+    )
+    confirm_action(
+        "确认已检查 YAML，启动测试容器？",
+        yes=args.yes,
+        dry_run=args.dry_run,
+    )
+    run(command, dry_run=args.dry_run)
+
+
+def context_or_empty(stack: contextlib.ExitStack, path: Path | None, name: str) -> Path:
+    if path is not None:
+        return path
+    directory = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix=f"kuavo-{name}-")))
+    (directory / ".keep").write_text("", encoding="utf-8")
+    return directory
+
+
+def release_command(args: argparse.Namespace, spec: BackendSpec) -> None:
+    ensure_ros_ready(spec, "release")
+    checkpoint, qwen, norm, runtime_assets, tokenizer = collect_assets(args, spec)
+    reject_sensitive_files([checkpoint, qwen, norm, runtime_assets, tokenizer])
+    policy_path = checkpoint_container_path(args.checkpoint_subpath)
+    source_config = resolve_existing(
+        args.config or str(REPO_ROOT / spec.config), kind="deploy config",
+    )
+    tag = args.tag or f"kuavo-{spec.key}-release:latest"
+
+    with contextlib.ExitStack() as stack:
+        staging = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="kuavo-release-")))
+        config_dir = staging / "config"
+        config_dir.mkdir()
+        render_config(
+            source_config, config_dir / "kuavo_env.yaml",
+            pretrained_path=policy_path,
+        )
+        norm_dir: Path | None = None
+        if norm:
+            norm_dir = staging / "norm"
+            norm_dir.mkdir()
+            shutil.copy2(norm, norm_dir / "norm_stats.json")
+        tokenizer_dir: Path | None = None
+        if tokenizer:
+            tokenizer_dir = staging / "tokenizer"
+            tokenizer_dir.mkdir()
+            shutil.copy2(tokenizer, tokenizer_dir / "tokenizer.model")
+
+        contexts = {
+            "checkpoint": checkpoint,
+            "qwen": context_or_empty(stack, qwen, "qwen"),
+            "norm_stats": context_or_empty(stack, norm_dir, "norm"),
+            "runtime_assets": context_or_empty(stack, runtime_assets, "runtime"),
+            "tokenizer": context_or_empty(stack, tokenizer_dir, "tokenizer"),
+            "deploy_config": config_dir,
+        }
+        command = [
+            "docker", "buildx", "build", "--load", "--progress=plain",
+            "--build-arg", f"BASE_IMAGE={args.image or spec.image}",
+            "--build-arg", f"KUAVO_BACKEND={spec.key}",
+            "--build-arg", f"SOURCE_IMAGE={args.image or spec.image}",
+        ]
+        for name, path in contexts.items():
+            command += ["--build-context", f"{name}={path}"]
+        command += ["-f", str(REPO_ROOT / "Dockerfile.release"), "-t", tag, str(REPO_ROOT)]
+        print(f"最终镜像标签: {tag}")
+        print("不会执行 docker save；需要 TAR 时单独运行 export。")
+        confirm_action(
+            "确认将上述 checkpoint/运行资产固化进 release 镜像？",
+            yes=args.yes,
+            dry_run=args.dry_run,
+        )
+        run(command, dry_run=args.dry_run)
+
+
+def export_command(args: argparse.Namespace) -> None:
+    image = args.image
+    if not image:
+        image = prompt_path("要导出的镜像标签")
+    output_value = prompt_path("TAR 输出路径", args.output)
+    output = Path(output_value).expanduser().resolve()
+    if output.exists():
+        raise UsageError(f"拒绝覆盖已有文件: {output}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if not args.yes:
+        if not sys.stdin.isatty():
+            raise UsageError("非交互 export 必须显式传入 --yes")
+        answer = input(f"将创建可能很大的 TAR：{output}。继续？[y/N] ").strip().lower()
+        if answer not in {"y", "yes"}:
+            print("已取消。")
+            return
+    run(["docker", "save", "-o", str(output), image], dry_run=args.dry_run)
+
+
+def make_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Kuavo Docker 交互构建、测试挂载、release 和显式 TAR 导出",
+    )
+    parser.add_argument("command", nargs="?", choices=["build", "shell", "release", "export"])
+    parser.add_argument("--backend", choices=sorted(BACKENDS))
+    parser.add_argument("--checkpoint")
+    parser.add_argument("--checkpoint-subpath", default="")
+    parser.add_argument("--qwen")
+    parser.add_argument("--norm-stats")
+    parser.add_argument("--runtime-assets")
+    parser.add_argument("--tokenizer")
+    parser.add_argument("--config")
+    parser.add_argument("--env-archive")
+    parser.add_argument("--image")
+    parser.add_argument("--tag")
+    parser.add_argument("--output")
+    parser.add_argument("--container-name")
+    parser.add_argument("--gpus", default="all")
+    parser.add_argument("--openpi-config", default="pi05_kuavo")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--yes", action="store_true")
+    return parser
+
+
+def main() -> int:
+    parser = make_parser()
+    args = parser.parse_args()
+    try:
+        command = args.command or prompt_choice(
+            "选择操作", ["build", "shell", "release", "export"],
+        )
+        if command == "export":
+            export_command(args)
+            return 0
+        backend = args.backend or prompt_choice("选择模型类型", list(BACKENDS))
+        spec = BACKENDS[backend]
+        if command == "build":
+            build_command(args, spec)
+        elif command == "shell":
+            shell_command(args, spec)
+        elif command == "release":
+            release_command(args, spec)
+        return 0
+    except UsageError as exc:
+        print(f"错误: {exc}", file=sys.stderr)
+        return 2
+    except subprocess.CalledProcessError as exc:
+        return exc.returncode
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
