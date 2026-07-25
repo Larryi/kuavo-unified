@@ -288,6 +288,14 @@ G 阶段验收：
   Dockerfile 的 `buildx --check` 均通过。由于当前未提供三份环境归档，
   尚未执行完整镜像 build/import；容器内 CUDA checkpoint 推理和宿主机
   ROS 消息闭环仍待手工验收，Gate I 为“部分通过”。
+- J 阶段自动验收已执行：OpenPI `8e9c6c` 可导入，JAX 当前识别到 CPU；
+  Task1 本地 LeRobot 数据可读（200 episodes、43,924 frames、10 Hz）；
+  协议 14 项测试全部通过；其余测试 60 项通过。LingBot-v2 唯一的 pytest
+  导入项因通用 `kdc_dev` 不包含 v2 的 `torchdata` 而不适用，在隔离
+  `kdc_vla` 环境直接执行同一 `FeatureTransform` slot 映射检查已通过。
+  当前 `nvidia-smi` 无法连接驱动，故未加载真实 OpenPI/LingBot
+  checkpoint，也未发布 ROS 动作。最终硬件门禁和安全执行顺序已写入
+  `docs/delivery_validation_zh.md`，Gate J 为“等待 GPU/操作者验收”。
 
 后续进展：
 

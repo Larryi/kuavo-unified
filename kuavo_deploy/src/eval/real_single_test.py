@@ -121,10 +121,10 @@ def stop_callback(msg):
     if msg.data:
         stop_flag.set()
 
-pause_sub = rospy.Subscriber('/kuavo/pause_state', Bool, pause_callback, queue_size=10)
-stop_sub = rospy.Subscriber('/kuavo/stop_state', Bool, stop_callback, queue_size=10)
 stop_flag = threading.Event()
 pause_flag = threading.Event()
+pause_sub = rospy.Subscriber('/kuavo/pause_state', Bool, pause_callback, queue_size=10)
+stop_sub = rospy.Subscriber('/kuavo/stop_state', Bool, stop_callback, queue_size=10)
 
 
 def setup_policy(pretrained_path, policy_type, cfg=None, device=torch.device("cuda")):
