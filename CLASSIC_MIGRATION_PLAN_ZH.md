@@ -338,6 +338,18 @@ G 阶段验收：
   LingBot-v2 的 global-step DCP 已按训练参数（LoRA rank 8、alpha 16）
   合并为完整 HF checkpoint，3 个 safetensors shard、1708 个键且无
   PEFT 残留；checkpoint 内已携带可移植的 `lingbotvla_cli.yaml`。
+  **按操作者 2026-07-25 的决定，LingBot-v2 后续适配现已暂缓。**
+  暂缓范围包括运行环境定型、最终 ROS-capable 镜像、真实权重加载、
+  open-loop/ROS mock 和真机验收；恢复前需重新决定“Ubuntu 22.04 +
+  官方 flash-attn wheel + ROS Noetic 兼容层”或其他交付基线。现有 HF
+  checkpoint、fork 修复和统一 adapter 代码保留，不作为已完成交付。
+- LingBot-v1 随后完成真实 GPU open-loop 门禁：Task1 episode 0、3 个
+  observation、每个 50 步、8 维动作均为有限值，平均推理约 0.45 秒；
+  但首动作 MAE 为 0.633 rad，关节 MAE 为 0.757 rad，60.75% 的预测值
+  超出训练数据动作范围。换用准确 Task1 提示词后结果逐值不变。因此
+  当前只能确认“checkpoint 可加载、接口可运行”，动作质量门禁未通过；
+  此前 ROS mock 成功不等于可安全上真机，必须先定位动作表示/归一化或
+  checkpoint 训练质量问题。
 - `15ce694` 已把 LingBot-v1 adapter 迁移到当前
   `deploy.lingbot_vla_policy` / `FeatureTransform` API，并对 v1/v2
   分别固定 robot config；训练 dry-run、映射测试和 adapter 回归通过。

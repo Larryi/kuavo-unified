@@ -31,7 +31,7 @@ Task1 是右 Leju 夹爪，Task2 是左右 Leju 夹爪，Task3 是右 Qiangnao
 ## 2. 无 ROS open-loop
 
 DP/ACT 使用 [dp_act_workflow_zh.md](dp_act_workflow_zh.md) 的命令；
-LingBot-v1/v2 使用 [lingbot_workflow_zh.md](lingbot_workflow_zh.md)；
+LingBot-v1 使用 [lingbot_workflow_zh.md](lingbot_workflow_zh.md)；
 OpenPI 使用 [openpi_workflow_zh.md](openpi_workflow_zh.md)。每种模型先只跑
 1 个 episode、3 个 sample，确认：
 
@@ -40,7 +40,8 @@ OpenPI 使用 [openpi_workflow_zh.md](openpi_workflow_zh.md)。每种模型先�
 - chunk horizon、首动作与 queue 模式时间对齐；
 - viewer 中原始动作和限速/边界平滑后的动作均可解释。
 
-DP/ACT 是基础门禁，但优先级低于最终交付的 OpenPI 和 LingBot-v1/v2。
+DP/ACT 是基础门禁，但优先级低于最终交付的 OpenPI 和 LingBot-v1。
+LingBot-v2 自 2026-07-25 起由操作者明确暂缓，不进入当前验收序列。
 
 ## 3. 隔离 worker 与协议
 
@@ -87,8 +88,8 @@ python kuavo_deploy/src/scripts/script.py \
   --config configs/deploy/kuavo_env.openpi_client.yaml
 ```
 
-第一轮只执行一个 episode，并保持急停。依次验收 OpenPI、LingBot-v1、
-LingBot-v2；DP/ACT 可复用同一 client YAML。每次只启动一个 worker，
+第一轮只执行一个 episode，并保持急停。依次验收 OpenPI、LingBot-v1；
+DP/ACT 可复用同一 client YAML。每次只启动一个 worker，
 核对 10 Hz 控制频率、动作维度、左右臂/夹爪 slot、暂停和停止信号。
 
 ## 6. Docker 与 VastAI
@@ -108,11 +109,21 @@ LingBot-v2；DP/ACT 可复用同一 client YAML。每次只启动一个 worker�
 
 上述结果不替代真实 checkpoint、单样本 open-loop 和 ROS 动作验收。
 
+当前真实权重结果：
+
+- OpenPI Pi0.5：ROS mock 与 Task1 3-sample open-loop 已通过；
+- LingBot-v1：checkpoint/GPU/ROS mock 接口可运行，但 Task1 3-sample
+  open-loop 的关节 MAE 为 0.757 rad，动作范围越界率为 60.75%，当前
+  判定动作质量门禁失败，禁止进入真机动作验收；
+- LingBot-v2：按操作者决定暂缓，不进入当前交付完成度。
+
 ```bash
 MODEL_BACKEND=openpi DRY_RUN=1 scripts/vast/launch.sh
 MODEL_BACKEND=lingbot-v1 DRY_RUN=1 scripts/vast/launch.sh
-MODEL_BACKEND=lingbot-v2 DRY_RUN=1 scripts/vast/launch.sh
 ```
+
+LingBot-v2 云端、镜像和推理验收均暂缓；统一入口保留其已有路由，但当前
+不应将其运行结果计入交付完成度。
 
 真实云端运行前逐项确认代码同步目标、数据集仓库、预训练权重清单和挂载
 位置，以及 HF/W&B/ServerChan/Vast token 仅存在于权限 600 的私有 env

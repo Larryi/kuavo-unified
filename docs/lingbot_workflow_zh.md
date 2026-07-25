@@ -3,7 +3,7 @@
 LingBot v1、v2 分别使用固定子模块和隔离环境：
 
 - v1：`third_party/lingbot-vla@4eb34b7`；
-- v2：`third_party/lingbot-vla-v2@d34898d`，远端为
+- v2：`third_party/lingbot-vla-v2@a5c2338`，远端为
   `Larryi/lingbot-vla-v2`。
 
 2026-07-25 核对官方 `Robbyant/lingbot-vla-v2` 后，官方 main 最新为
@@ -32,6 +32,10 @@ python kuavo_train/train_policy.py \
 训练并把 `norm_stats.json` 与 `lingbotvla_cli.yaml` 放进最终 `hf_ckpt`。
 
 ## v2 训练
+
+> 状态（2026-07-25）：按操作者决定，LingBot-v2 的环境、镜像、推理和
+> 真机适配暂缓。下面命令仅保留为已实现的训练入口记录，不属于当前交付
+> 验收范围。已合并导出的 HF checkpoint 与 fork 修复继续保留。
 
 ```bash
 python kuavo_train/train_lingbot_v2.py policy.dry_run=true
@@ -65,13 +69,12 @@ python tools/open_loop_eval.py \
   --device cuda
 ```
 
-把 `--policy-type` 改为 `lingbot_v2`，并把 processor 路径改为 Qwen3-VL，
-即可使用 v2。交互 Viewer：
+LingBot-v2 的 open-loop 实测暂缓。交互 Viewer：
 
 ```bash
 streamlit run tools/open_loop_viewer.py
 ```
 
 v1/v2 的 Python 包名和 `deploy` 包名冲突，不能在同一进程轮流加载；应在
-各自容器或 worker 进程中运行。当前无 GPU 沙箱只验证了命令组合、payload、
-slot 映射与导入，完整权重加载和 ROS 消息推理需在 CUDA 宿主机手工验收。
+各自容器或 worker 进程中运行。V2 恢复前不得把已有命令组合、payload 和
+slot 映射测试记为完整部署验收。
