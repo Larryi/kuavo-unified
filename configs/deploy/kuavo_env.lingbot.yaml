@@ -32,7 +32,9 @@ inference:
   lingbot_root: /root/kuavo_data_challenge/third_party/lingbot-vla
   qwen25_path: /assets/qwen
   lingbot_norm_stats_file: /assets/norm_stats/norm_stats.json
-  lingbot_robot_name: kuavo_v1_right_arm
+  # This shipped checkpoint was trained by the legacy custom Task1 loader with
+  # absolute arm actions. Do not use the newer relative-action profile here.
+  lingbot_robot_name: kuavo_v1_right_arm_absolute
   lingbot_use_length: 5
   lingbot_chunk_ret: false
   lingbot_use_compile: false

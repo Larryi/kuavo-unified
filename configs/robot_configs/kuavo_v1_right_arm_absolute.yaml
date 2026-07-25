@@ -1,0 +1,26 @@
+# Compatibility profile for the existing Task1 LingBot-v1 checkpoint trained
+# with custom_task1_345_right_arm before robot_config_root was recorded.
+states:
+  - observation.state.arm.position:
+      origin_keys:
+        - observation.state: {start: 0, end: 7}
+  - observation.state.effector.position:
+      origin_keys:
+        - observation.state: {start: 7, end: 8}
+
+actions:
+  - action.arm.position:
+      origin_keys:
+        - action: {start: 0, end: 7}
+      subtract_state: false
+      relative_type: joint
+  - action.effector.position:
+      origin_keys:
+        - action: {start: 7, end: 8}
+      subtract_state: false
+
+images:
+  - observation.images.camera_top:
+      origin_keys: observation.images.head_cam_h
+  - observation.images.camera_wrist_right:
+      origin_keys: observation.images.wrist_cam_r

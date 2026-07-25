@@ -56,6 +56,12 @@ v1 适配器使用当前官方入口 `deploy.lingbot_vla_policy.LingbotVLAServer
 模型目录中应携带 `norm_stats.json`；也可显式传
 `lingbot_norm_stats_file`。
 
+现有 `/mnt/pqssd/hf_train_outputs/task1_lingbot` 来自旧
+`custom_task1_345_right_arm` 训练入口，训练配置没有记录
+`robot_config_root`，其 arm action 是绝对位置。部署该权重必须使用
+`kuavo_v1_right_arm_absolute`；新版按当前配置重新训练的相对动作权重才
+使用 `kuavo_v1_right_arm`。两者混用会在反变换阶段重复加当前关节状态。
+
 ```bash
 python tools/open_loop_eval.py \
   --dataset-root /mnt/pqssd/Real_PQ_3.0/TASK1_SZ_Repaired/lerobot_task1_345 \

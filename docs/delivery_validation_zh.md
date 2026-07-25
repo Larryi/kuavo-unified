@@ -112,9 +112,11 @@ DP/ACT 可复用同一 client YAML。每次只启动一个 worker，
 当前真实权重结果：
 
 - OpenPI Pi0.5：ROS mock 与 Task1 3-sample open-loop 已通过；
-- LingBot-v1：checkpoint/GPU/ROS mock 接口可运行，但 Task1 3-sample
-  open-loop 的关节 MAE 为 0.757 rad，动作范围越界率为 60.75%，当前
-  判定动作质量门禁失败，禁止进入真机动作验收；
+- LingBot-v1：checkpoint/GPU/ROS mock 接口可运行；修正旧 checkpoint
+  的 absolute-action profile 后，Task1 3-sample open-loop 首动作 MAE
+  为 0.0276 rad、关节 MAE 为 0.0927 rad、全 50-step horizon 越界率
+  为 12.08%。进入真机前仍需在 Viewer 审核越界集中位置，并保持首次
+  `client_execute_steps: 1`；
 - LingBot-v2：按操作者决定暂缓，不进入当前交付完成度。
 
 ```bash

@@ -343,13 +343,16 @@ G 阶段验收：
   open-loop/ROS mock 和真机验收；恢复前需重新决定“Ubuntu 22.04 +
   官方 flash-attn wheel + ROS Noetic 兼容层”或其他交付基线。现有 HF
   checkpoint、fork 修复和统一 adapter 代码保留，不作为已完成交付。
-- LingBot-v1 随后完成真实 GPU open-loop 门禁：Task1 episode 0、3 个
-  observation、每个 50 步、8 维动作均为有限值，平均推理约 0.45 秒；
-  但首动作 MAE 为 0.633 rad，关节 MAE 为 0.757 rad，60.75% 的预测值
-  超出训练数据动作范围。换用准确 Task1 提示词后结果逐值不变。因此
-  当前只能确认“checkpoint 可加载、接口可运行”，动作质量门禁未通过；
-  此前 ROS mock 成功不等于可安全上真机，必须先定位动作表示/归一化或
-  checkpoint 训练质量问题。
+- LingBot-v1 随后完成真实 GPU open-loop 门禁并定位旧权重动作契约：
+  该 checkpoint 的 `source_training_config.yaml` 使用旧
+  `custom_task1_345_right_arm`，输出为绝对关节位置；若误用新版
+  `subtract_state: true` profile，会重复加当前状态，导致关节 MAE
+  0.757 rad、60.75% 越界。新增独立
+  `kuavo_v1_right_arm_absolute` profile 后，Task1 episode 0 的 3 个
+  observation、每个 50 步、8 维动作均为有限值，首动作 MAE 降至
+  0.0276 rad、关节 MAE 降至 0.0927 rad、全 horizon 越界率降至
+  12.08%，平均推理约 0.44 秒。当前部署 YAML 已固定到该兼容 profile；
+  未来按新版相对动作配置训练的权重仍使用 `kuavo_v1_right_arm`。
 - `15ce694` 已把 LingBot-v1 adapter 迁移到当前
   `deploy.lingbot_vla_policy` / `FeatureTransform` API，并对 v1/v2
   分别固定 robot config；训练 dry-run、映射测试和 adapter 回归通过。
