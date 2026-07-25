@@ -3,6 +3,7 @@ from typing import Any
 
 import torch
 
+import lerobot_patches.custom_patches  # noqa: F401
 from kuavo_deploy.utils.logging_utils import setup_logger
 from kuavo_train.wrapper.policy.act.ACTPolicyWrapper import CustomACTPolicyWrapper
 from kuavo_train.wrapper.policy.diffusion.DiffusionPolicyWrapper import CustomDiffusionPolicyWrapper
@@ -11,6 +12,10 @@ from lerobot.policies.factory import make_pre_post_processors
 
 log_model = setup_logger("model")
 REPO_ROOT = Path(__file__).resolve().parents[2]
+PROCESSOR_CONFIG_FILES = (
+    "policy_preprocessor.json",
+    "policy_postprocessor.json",
+)
 
 
 def resolve_policy_path(cfg: Any) -> Path:
@@ -31,6 +36,18 @@ def resolve_eval_output_dir(cfg: Any, pretrained_path: Path) -> Path:
     return Path(f"outputs/eval/{cfg.task}/{cfg.method}/{cfg.timestamp}/epoch{cfg.epoch}")
 
 
+def resolve_processor_root(pretrained_path: str | Path) -> Path:
+    """Find the run directory that owns the saved pre/post processors."""
+    policy_path = Path(pretrained_path).expanduser().resolve()
+    candidates = (policy_path, *policy_path.parents)
+    for candidate in candidates:
+        if all((candidate / name).is_file() for name in PROCESSOR_CONFIG_FILES):
+            return candidate
+    raise FileNotFoundError(
+        f"Could not find {PROCESSOR_CONFIG_FILES} at or above checkpoint {policy_path}"
+    )
+
+
 def load_policy_and_processors(
     pretrained_path,
     policy_type: str,
@@ -45,13 +62,23 @@ def load_policy_and_processors(
 
     if policy_type == "diffusion":
         policy = CustomDiffusionPolicyWrapper.from_pretrained(pretrained_path, strict=True)
+        processor_root = resolve_processor_root(pretrained_path)
         preprocessor, postprocessor = make_pre_post_processors(
-            None, Path(str(pretrained_path).split("/epoch", 1)[0])
+            None,
+            processor_root,
+            preprocessor_overrides={
+                "device_processor": {"device": str(device)},
+            },
         )
     elif policy_type == "act":
         policy = CustomACTPolicyWrapper.from_pretrained(pretrained_path, strict=True)
+        processor_root = resolve_processor_root(pretrained_path)
         preprocessor, postprocessor = make_pre_post_processors(
-            None, Path(str(pretrained_path).split("/epoch", 1)[0])
+            None,
+            processor_root,
+            preprocessor_overrides={
+                "device_processor": {"device": str(device)},
+            },
         )
     elif policy_type == "lingbot":
         if device.type != "cuda":

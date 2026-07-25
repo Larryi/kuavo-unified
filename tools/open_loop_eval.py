@@ -27,7 +27,6 @@ from tqdm import tqdm
 
 import lerobot_patches.custom_patches  # noqa: F401
 from kuavo_deploy.utils.policy_loader import load_policy_and_processors
-from lerobot.datasets.factory import resolve_delta_timestamps
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 
 
@@ -110,6 +109,52 @@ def postprocess_action(postprocessor, action: torch.Tensor) -> torch.Tensor:
         return out.reshape(*original_shape)
 
 
+def build_open_loop_delta_timestamps(
+    policy,
+    dataset_metadata,
+    mode: str,
+    policy_type: str,
+):
+    """Load future ground-truth actions without pre-batching observation history."""
+    if mode != "chunk":
+        return None
+    action_indices = getattr(policy.config, "action_delta_indices", None)
+    if action_indices is None:
+        chunk_size = int(
+            getattr(
+                policy.config,
+                "chunk_size",
+                getattr(policy.config, "horizon", 1),
+            )
+        )
+        action_indices = list(range(chunk_size))
+    else:
+        action_indices = list(action_indices)
+
+    # DiffusionPolicy's action timeline includes the observation-history offset
+    # (for example [-1, 0, ..., 14] when n_obs_steps=2). select_action() exposes
+    # only the executable window, which starts at index n_obs_steps - 1.
+    if policy_type == "diffusion":
+        start = max(int(getattr(policy.config, "n_obs_steps", 1)) - 1, 0)
+        count = int(getattr(policy.config, "n_action_steps", len(action_indices)))
+        action_indices = action_indices[start : start + count]
+    return {
+        "action": [int(index) / dataset_metadata.fps for index in action_indices],
+    }
+
+
+def predict_classic_chunk(policy, batch: dict, policy_type: str) -> torch.Tensor:
+    """Return a BxHxD action chunk using each classic policy's rollout contract."""
+    policy.reset()
+    if policy_type == "act":
+        return policy.predict_action_chunk(batch)
+    if policy_type == "diffusion":
+        horizon = int(getattr(policy.config, "n_action_steps", 1))
+        actions = [policy.select_action(batch) for _ in range(horizon)]
+        return torch.stack(actions, dim=1)
+    return policy.predict_action_chunk(batch)
+
+
 def prediction_from_sample(
     policy,
     preprocessor,
@@ -123,8 +168,7 @@ def prediction_from_sample(
     batch = preprocessor(observation)
     with torch.inference_mode():
         if mode == "chunk" and hasattr(policy, "predict_action_chunk"):
-            policy.reset()
-            action = policy.predict_action_chunk(batch)
+            action = predict_classic_chunk(policy, batch, policy_type)
         else:
             action = policy.select_action(batch)
     action = postprocess_action(postprocessor, action)
@@ -235,7 +279,12 @@ def main() -> None:
         policy_path, args.policy_type, device, policy_kwargs=policy_kwargs
     )
     ds_meta = LeRobotDatasetMetadata(args.repo_id, root=args.dataset_root)
-    delta_timestamps = resolve_delta_timestamps(policy.config, ds_meta)
+    delta_timestamps = build_open_loop_delta_timestamps(
+        policy,
+        ds_meta,
+        args.mode,
+        args.policy_type,
+    )
     dataset = LeRobotDataset(
         args.repo_id,
         root=args.dataset_root,
@@ -304,42 +353,41 @@ def main() -> None:
 
         pred_h = pred[:horizon]
         gt_h = gt[:horizon]
+        valid = torch.ones(horizon, dtype=torch.bool)
         if valid_mask is not None:
-            valid = valid_mask[:horizon]
-            pred_h = pred_h[valid]
-            gt_h = gt_h[valid]
-            horizon = pred_h.shape[0]
-            if horizon <= 0:
-                continue
+            valid &= valid_mask[:horizon]
 
         nonfinite_values += int((~torch.isfinite(pred_h)).sum().item())
         predicted_values += int(pred_h.numel())
-        if not torch.isfinite(pred_h).all():
+        valid &= torch.isfinite(pred_h).all(dim=-1)
+        if not valid.any():
             continue
 
         err = pred_h - gt_h
-        sums["sum_abs"][:horizon] += err.abs()
-        sums["sum_sq"][:horizon] += err.square()
-        sums["count_h"][:horizon] += 1
+        valid_indices = torch.nonzero(valid, as_tuple=False).squeeze(-1)
+        sums["sum_abs"][valid_indices] += err[valid].abs()
+        sums["sum_sq"][valid_indices] += err[valid].square()
+        sums["count_h"][valid_indices] += 1
         sums["count"] += 1
 
-        violations, values = action_range_stats(pred_h, action_min, action_max)
+        violations, values = action_range_stats(pred_h[valid], action_min, action_max)
         sums["range_violations"] += violations
         sums["range_values"] += values
 
-        first_err = err[0]
-        row = {
-            "dataset_index": idx,
-            "episode_index": episode_index,
-            "frame_index": frame_index,
-            "first_action_mae": float(first_err.abs().mean().item()),
-            "first_action_rmse": float(math.sqrt(first_err.square().mean().item())),
-        }
-        for dim in range(action_dim):
-            row[f"pred_{dim}"] = float(pred_h[0, dim].item())
-            row[f"gt_{dim}"] = float(gt_h[0, dim].item())
-            row[f"err_{dim}"] = float(first_err[dim].item())
-        first_rows.append(row)
+        if valid[0]:
+            first_err = err[0]
+            row = {
+                "dataset_index": idx,
+                "episode_index": episode_index,
+                "frame_index": frame_index,
+                "first_action_mae": float(first_err.abs().mean().item()),
+                "first_action_rmse": float(math.sqrt(first_err.square().mean().item())),
+            }
+            for dim in range(action_dim):
+                row[f"pred_{dim}"] = float(pred_h[0, dim].item())
+                row[f"gt_{dim}"] = float(gt_h[0, dim].item())
+                row[f"err_{dim}"] = float(first_err[dim].item())
+            first_rows.append(row)
         sampled_per_episode[episode_index] += 1
         progress.set_postfix(samples=int(sums["count"]))
         if target_episodes and all(
@@ -351,12 +399,27 @@ def main() -> None:
     if count == 0:
         raise RuntimeError("No samples were evaluated. Check episodes, stride, and max-frames-per-episode.")
 
-    count_h = sums["count_h"].clamp_min(1)
-    mae = sums["sum_abs"] / count_h
-    mse = sums["sum_sq"] / count_h
-    horizon_mae = mae.mean(dim=1)
-    dim_mae = mae.mean(dim=0)
+    count_h = sums["count_h"].squeeze(-1)
+    valid_horizons = count_h > 0
+    total_valid_steps = int(count_h.sum().item())
+    if total_valid_steps == 0:
+        raise RuntimeError("All evaluated action targets were padded or non-finite.")
+    horizon_mae = torch.full((target_horizon,), torch.nan)
+    horizon_rmse = torch.full((target_horizon,), torch.nan)
+    horizon_mae[valid_horizons] = (
+        sums["sum_abs"].sum(dim=1)[valid_horizons]
+        / (count_h[valid_horizons] * action_dim)
+    )
+    horizon_rmse[valid_horizons] = torch.sqrt(
+        sums["sum_sq"].sum(dim=1)[valid_horizons]
+        / (count_h[valid_horizons] * action_dim)
+    )
+    dim_mae = sums["sum_abs"].sum(dim=0) / total_valid_steps
+    total_values = total_valid_steps * action_dim
+    overall_mae = sums["sum_abs"].sum() / total_values
+    overall_rmse = torch.sqrt(sums["sum_sq"].sum() / total_values)
     inference_array = np.asarray(inference_times, dtype=np.float64)
+    joint_dims = min(7, action_dim)
     summary = {
         "dataset_root": str(args.dataset_root),
         "repo_id": args.repo_id,
@@ -370,15 +433,30 @@ def main() -> None:
         "chunk_size": policy_chunk_size,
         "n_action_steps": int(getattr(policy.config, "n_action_steps", policy_chunk_size)),
         "evaluated_horizon": target_horizon,
+        "valid_targets_per_horizon": [int(v) for v in count_h.tolist()],
         "action_dim": action_dim,
-        "overall_mae": float(mae.mean().item()),
-        "overall_rmse": float(torch.sqrt(mse.mean()).item()),
-        "first_action_mae": float(horizon_mae[0].item()),
-        "first_action_rmse": float(torch.sqrt(mse[0].mean()).item()),
-        "horizon_mae": [float(v) for v in horizon_mae.tolist()],
+        "overall_mae": float(overall_mae.item()),
+        "overall_rmse": float(overall_rmse.item()),
+        "first_action_mae": (
+            float(horizon_mae[0].item()) if valid_horizons[0] else None
+        ),
+        "first_action_rmse": (
+            float(horizon_rmse[0].item()) if valid_horizons[0] else None
+        ),
+        "horizon_mae": [
+            float(value) if valid else None
+            for value, valid in zip(horizon_mae.tolist(), valid_horizons.tolist())
+        ],
         "dim_mae": [float(v) for v in dim_mae.tolist()],
-        "joint_mae": float(mae[:, : min(7, action_dim)].mean().item()),
-        "gripper_mae": float(mae[:, -1].mean().item()),
+        "joint_mae": float(
+            (
+                sums["sum_abs"][:, :joint_dims].sum()
+                / (total_valid_steps * joint_dims)
+            ).item()
+        ),
+        "gripper_mae": float(
+            (sums["sum_abs"][:, -1].sum() / total_valid_steps).item()
+        ),
         "nonfinite_rate": float(nonfinite_values / predicted_values) if predicted_values else None,
         "inference_seconds_mean": float(inference_array.mean()),
         "inference_seconds_p95": float(np.percentile(inference_array, 95)),

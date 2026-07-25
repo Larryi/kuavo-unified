@@ -37,7 +37,6 @@ from kuavo_deploy.utils.gripper_latch import (
     parse_action_indices,
 )
 from kuavo_deploy.utils.policy_loader import load_policy_and_processors
-from lerobot.datasets.factory import resolve_delta_timestamps
 import lerobot.datasets.lerobot_dataset as lerobot_dataset_module
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 
@@ -532,12 +531,14 @@ def load_dataset(
     dataset_root_path = Path(dataset_root).expanduser().resolve()
     with local_dataset_only(dataset_root_path):
         ds_meta = LeRobotDatasetMetadata(repo_id, root=dataset_root_path)
-        delta_timestamps = resolve_delta_timestamps(policy.config, ds_meta)
         dataset = LeRobotDataset(
             repo_id,
             root=dataset_root_path,
             episodes=list(episodes),
-            delta_timestamps=delta_timestamps,
+            # The policy owns its causal observation/action queues. Pre-batching
+            # temporal history here adds an extra time dimension and changes the
+            # rollout contract. Timeline GT is read directly from parquet below.
+            delta_timestamps=None,
             video_backend=video_backend or None,
         )
     fix_episode_subset_delta_indices(dataset)

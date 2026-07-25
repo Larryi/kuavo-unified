@@ -18,7 +18,6 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-import shutil
 import os
 import socket
 from hydra.utils import instantiate
@@ -35,6 +34,10 @@ from kuavo_train.utils.utils import save_rng_state, load_rng_state
 from lerobot.policies.act.modeling_act import ACTPolicy
 from kuavo_train.utils.transforms import ImageTransforms, ImageTransformsConfig, ImageTransformConfig
 from kuavo_train.compile_utils import maybe_compile_policy
+from kuavo_train.utils.training_loop import (
+    accumulation_window_size,
+    should_optimizer_step,
+)
 
 from functools import partial
 from contextlib import nullcontext
@@ -373,8 +376,19 @@ def main(cfg: DictConfig):
 
     set_seed(cfg.training.seed)
 
-    # Setup output directory
-    output_directory = Path(cfg.training.output_directory) / f"run_{cfg.timestamp}"
+    # Resume in place so model, processors, optimizer state and logs remain one
+    # self-contained checkpoint. New runs continue to use the Hydra timestamp.
+    resume_enabled = bool(getattr(cfg.training, "resume", False))
+    resume_timestamp = str(getattr(cfg.training, "resume_timestamp", "") or "").strip()
+    if resume_enabled and resume_timestamp:
+        resume_run_dir = (
+            resume_timestamp
+            if resume_timestamp.startswith("run_")
+            else f"run_{resume_timestamp}"
+        )
+        output_directory = Path(cfg.training.output_directory) / resume_run_dir
+    else:
+        output_directory = Path(cfg.training.output_directory) / f"run_{cfg.timestamp}"
     output_directory.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(log_dir=str(output_directory))
 
@@ -400,8 +414,9 @@ def main(cfg: DictConfig):
     policy = build_policy(cfg.policy_name, policy_cfg)
     maybe_compile_policy(policy, cfg)
     preprocessor, postprocessor = make_pre_post_processors(policy_cfg, dataset_stats=dataset_metadata.stats)
-    preprocessor.save_pretrained(output_directory)
-    postprocessor.save_pretrained(output_directory)
+    if not resume_enabled:
+        preprocessor.save_pretrained(output_directory)
+        postprocessor.save_pretrained(output_directory)
     optimizer, lr_scheduler = build_optimizer_and_scheduler(policy, cfg, dataset_metadata.info["total_frames"])
     
     # Initialize AMP GradScaler if use_amp is True
@@ -431,8 +446,8 @@ def main(cfg: DictConfig):
 
     # ===== Resume logic (perfect resume for AMP & RNG) =====
     
-    if cfg.training.resume and cfg.training.resume_timestamp:
-        resume_path = Path(cfg.training.output_directory) / cfg.training.resume_timestamp
+    if resume_enabled and resume_timestamp:
+        resume_path = output_directory
         print("Resuming from:", resume_path)
         try:
             # Load RNG state
@@ -466,10 +481,6 @@ def main(cfg: DictConfig):
             if "best_loss" in checkpoint:
                 best_loss = checkpoint["best_loss"]
             
-            # Copy and load log_event
-            for file in resume_path.glob("events.*"):
-                shutil.copy(file, output_directory)
-                
             print(f"Resumed training from epoch {start_epoch}, step {steps}")
         except Exception as e:
             print("Failed to load checkpoint:", e)
@@ -521,19 +532,33 @@ def main(cfg: DictConfig):
 
         
         total_loss = 0.0
-        for batch in epoch_bar:
+        batch_count = 0
+        optimizer.zero_grad()
+        reached_step_limit = False
+        total_batches = len(dataloader)
+        for batch_index, batch in enumerate(epoch_bar):
             batch = preprocessor(batch)  # will normalize and put batch to device
             with make_autocast(amp_enabled):
                 loss, _ = policy.forward(batch)
             # Scale loss and backward with AMP if enabled
-            scaled_loss = loss / cfg.training.accumulation_steps
+            window_size = accumulation_window_size(
+                batch_index,
+                total_batches,
+                cfg.training.accumulation_steps,
+            )
+            scaled_loss = loss / window_size
             
             if amp_enabled:
                 scaler.scale(scaled_loss).backward()
             else:
                 scaled_loss.backward()
 
-            if steps % cfg.training.accumulation_steps == 0:
+            optimizer_stepped = should_optimizer_step(
+                batch_index,
+                total_batches,
+                cfg.training.accumulation_steps,
+            )
+            if optimizer_stepped:
                 if amp_enabled:
                     # Optionally unscale and clip gradients here if you use clipping
                     scaler.step(optimizer)
@@ -542,18 +567,28 @@ def main(cfg: DictConfig):
                     optimizer.step()
                 optimizer.zero_grad()
                 lr_scheduler.step()
+                steps += 1
 
-            if steps % cfg.training.log_freq == 0:
-                writer.add_scalar("train/loss", scaled_loss.item(), steps)
+            if optimizer_stepped and steps % cfg.training.log_freq == 0:
+                writer.add_scalar("train/loss", loss.item(), steps)
                 writer.add_scalar("train/lr", lr_scheduler.get_last_lr()[0], steps)
-                epoch_bar.set_postfix(loss=f"{scaled_loss.item():.3f}", step=steps, lr=lr_scheduler.get_last_lr()[0])
+                epoch_bar.set_postfix(loss=f"{loss.item():.3f}", step=steps, lr=lr_scheduler.get_last_lr()[0])
 
-            steps += 1
-            total_loss += scaled_loss.item()
+            total_loss += loss.item()
+            batch_count += 1
+            if (
+                optimizer_stepped
+                and cfg.training.max_training_step is not None
+                and steps >= int(cfg.training.max_training_step)
+            ):
+                reached_step_limit = True
+                break
+
+        average_loss = total_loss / batch_count if batch_count else float("inf")
         
         # Update best loss
-        if total_loss < best_loss:
-            best_loss = total_loss
+        if average_loss < best_loss:
+            best_loss = average_loss
             # Save best model
             policy.save_pretrained(output_directory / "epochbest")
         # Save checkpoint every N epochs
@@ -576,6 +611,11 @@ def main(cfg: DictConfig):
         }
         torch.save(checkpoint, output_directory / "learning_state.pth")
         save_rng_state(output_directory / "rng_state.pth")
+        if reached_step_limit:
+            print(
+                f"Reached max_training_step={cfg.training.max_training_step}; stopping."
+            )
+            break
 
     writer.close()
 
