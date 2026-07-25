@@ -245,14 +245,17 @@ G 阶段验收：
   Task 2 H100 配置和单次 `epochlast` 交付 checkpoint。
 - 已通过 28 项模块/回归测试、YAML/Hydra 组合检查、viewer 导入检查、
   单进程 smoke 和双 rank CPU 同步 smoke。
-- Gate C 仍为“部分通过”：当前执行环境无可用 CUDA，尚未执行真实
-  DP 最小训练→保存→重载闭环。该项必须在 GPU 环境补测后才能把训练
-  链路标记为交付就绪。
+- Gate C 仍为“部分通过”：当前主机已确认 RTX 3090、驱动
+  575.57.08（`nvidia-smi` 报 CUDA 12.9）可用，但尚未执行真实 DP
+  最小训练→保存→重载闭环。该项必须补测后才能把训练链路标记为交付
+  就绪。
 - D 阶段代码迁移已完成：classic Docker 使用固定的 bundled LeRobot，
   BuildKit 独立输入 `myenv.tar.gz`，构建上下文排除凭据、输出、权重和
   其他 backend。`bash -n`、构建 dry-run 和 `docker buildx build
-  --check` 已通过；未提供外部 `myenv.tar.gz`，因此尚未执行完整镜像
-  构建、容器 import smoke 和离线 loader，Gate D 为“部分通过”。
+  --check` 已通过。Classic `kdc_dev` 已打包到
+  `/mnt/pqssd/docker_envs/classic/myenv.tar.gz` 并生成 SHA-256；尚未
+  执行完整镜像构建、容器 import smoke 和离线 loader，Gate D 为
+  “部分通过”。
 - E 阶段代码迁移已完成：A100 流水线要求显式
   `DATASET_REPO`/`MODEL_REPO`，代码归档要求 SHA-256，dry-run 不需要
   token 且不创建工作目录，缺少 `HF_TOKEN` 会在任何写入前安全失败。
@@ -285,17 +288,30 @@ G 阶段验收：
   classic 镜像。统一 runner 只读挂载权重并从运行时 env 文件读取协议
   密钥，不再删除已有镜像/容器。LingBot-v1 镜像中原先持久化的诊断
   密钥和写死 ROS 地址已移除。20 项脚本测试、shell 语法和三个
-  Dockerfile 的 `buildx --check` 均通过。由于当前未提供三份环境归档，
-  尚未执行完整镜像 build/import；容器内 CUDA checkpoint 推理和宿主机
-  ROS 消息闭环仍待手工验收，Gate I 为“部分通过”。
+  Dockerfile 的 `buildx --check` 均通过。Classic 和 LingBot-v1
+  环境归档已经生成并通过 SHA-256 校验；LingBot-v2 必须在
+  Ubuntu 22.04/glibc 2.35 的 GPU builder 上生成。尚未执行完整镜像
+  build/import；容器内 CUDA checkpoint 推理和宿主机 ROS 消息闭环
+  仍待手工验收，Gate I 为“部分通过”。
 - J 阶段自动验收已执行：OpenPI `8e9c6c` 可导入，JAX 当前识别到 CPU；
   Task1 本地 LeRobot 数据可读（200 episodes、43,924 frames、10 Hz）；
   协议 14 项测试全部通过；其余测试 60 项通过。LingBot-v2 唯一的 pytest
   导入项因通用 `kdc_dev` 不包含 v2 的 `torchdata` 而不适用，在隔离
   `kdc_vla` 环境直接执行同一 `FeatureTransform` slot 映射检查已通过。
-  当前 `nvidia-smi` 无法连接驱动，故未加载真实 OpenPI/LingBot
-  checkpoint，也未发布 ROS 动作。最终硬件门禁和安全执行顺序已写入
-  `docs/delivery_validation_zh.md`，Gate J 为“等待 GPU/操作者验收”。
+  Codex 执行隔离层内的 `nvidia-smi` 不可见 GPU；用户已确认宿主机驱动
+  575.57.08、CUDA 12.9 正常，因此这不是宿主机阻塞，但真实 checkpoint
+  和 ROS 动作仍需从可见 GPU 的宿主终端验收。最终硬件门禁和安全执行
+  顺序已写入 `docs/delivery_validation_zh.md`，Gate J 为“等待
+  GPU/操作者验收”。
+- 三个最终数据集路径已确认并读取元数据：Task1 repaired 345（81,142
+  frames）、Task2 repaired 264（50,042 frames，双腕相机）、Task3
+  repaired 165（26,987 frames），均为 10 Hz。Docker 环境盘点确认
+  classic 使用 `kdc_dev`、LingBot-v1 使用 `kdc_vla`；LingBot-v2 必须
+  由固定子模块脚本新建 Python 3.12/PyTorch 2.8 环境，不能复用当前
+  Torch 2.11 的 `lerobot_hil`。准确的 conda-pack 和构建命令已更新到
+  `docker/readme.md`。官方 flash-attn 2.8.3 wheel 还要求 GLIBC 2.32，
+  因此当前 glibc 2.31 主机的 LingBot-v1 保留已验证的 2.7.0.post2
+  wheel；仅在 Ubuntu 22.04/cloud 为 LingBot-v2 使用官方 2.8.3 wheel。
 
 后续进展：
 

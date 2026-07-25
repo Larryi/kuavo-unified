@@ -16,6 +16,18 @@ python -m py_compile \
 要求所有子模块提交与 `.gitmodules`/迁移计划一致，GPU 驱动可用，且
 checkpoint、norm stats、数据集来自同一次训练/转换。
 
+当前确认的数据集是：
+
+- Task1：`/mnt/pqssd/Real_PQ_3.0/TASK1_SZ_Repaired/lerobot_task1_345`
+- Task2：`/mnt/pqssd/Real_PQ_3.0/TASK2_SZ_Repaired/lerobot_task2_264`
+- Task3：`/mnt/pqssd/Real_PQ_3.0/TASK3_SZ_Repaired/lerobot_task3_165`
+
+三者均为 10 Hz，分别包含 345/264/165 episodes 和
+81,142/50,042/26,987 frames。Task1、Task3 的 state/action 为 8 维，
+使用头部加右腕相机；Task2 为 16 维并使用头部、左腕、右腕三路相机。
+Task1 是右 Leju 夹爪，Task2 是左右 Leju 夹爪，Task3 是右 Qiangnao
+末端。模型配置必须同时对应维度、相机和末端类型，不能只替换数据路径。
+
 ## 2. 无 ROS open-loop
 
 DP/ACT 使用 [dp_act_workflow_zh.md](dp_act_workflow_zh.md) 的命令；

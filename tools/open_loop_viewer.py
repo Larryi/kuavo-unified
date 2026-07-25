@@ -41,7 +41,9 @@ import lerobot.datasets.lerobot_dataset as lerobot_dataset_module
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 
 
-DEFAULT_DATASET_ROOT = "/mnt/pqssd/Real_PQ_3.0/TASK1_SZ/lerobot_trimmed"
+DEFAULT_DATASET_ROOT = (
+    "/mnt/pqssd/Real_PQ_3.0/TASK1_SZ_Repaired/lerobot_task1_345"
+)
 DEFAULT_POLICY_PATH = ""
 DEFAULT_LINGBOT_POLICY_PATH = (
     "/mnt/pqssd/lingbot_weights/clean_meanstd_fm_L2V2_mb16_gb16_8k_20260623_175250/"

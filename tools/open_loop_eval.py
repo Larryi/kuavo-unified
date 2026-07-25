@@ -30,7 +30,9 @@ from kuavo_deploy.utils.policy_loader import load_policy_and_processors
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 
 
-DEFAULT_DATASET_ROOT = Path("/mnt/pqssd/Real_PQ_3.0/TASK1_SZ/lerobot_trimmed")
+DEFAULT_DATASET_ROOT = Path(
+    "/mnt/pqssd/Real_PQ_3.0/TASK1_SZ_Repaired/lerobot_task1_345"
+)
 DEFAULT_TASK = "Pick and Place the safety belt, cable and pin connector"
 
 

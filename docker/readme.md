@@ -48,42 +48,148 @@ sudo systemctl status docker
 
 ---
 
-## 2️⃣ Package Your Conda Environment Using conda-pack
+## 2️⃣ Package backend-specific Conda environments
 
-1. Install  conda-pack
+The unified repository deliberately uses separate environments. Do not pack
+one environment and reuse it for every backend.
 
-```bash
-conda install -c conda-forge conda-pack
-```
+| Image | Conda environment | Required runtime |
+|---|---|---|
+| Classic ACT / DP | `kdc_dev` | Python 3.10, PyTorch 2.7.1 + CUDA 12.6 |
+| LingBot-VLA v1 | `kdc_vla` | Python 3.10, PyTorch 2.7.1 + CUDA 12.6, flash-attn |
+| LingBot-VLA v2 | `lingbotvla_v2` | Python 3.12, PyTorch 2.8.0, flash-attn 2.8.3 |
+| OpenPI | no archive | Built from the pinned `uv.lock` |
 
-2. Assume you already have a Conda environment named `kdc`：
-
-```bash
-conda activate kdc
-```
-
-3. Pack the environment:
+Install `conda-pack` once:
 
 ```bash
-conda pack -n kdc -o myenv.tar.gz
+conda install -n base -c conda-forge conda-pack
 ```
 
-⚠️ Important Notes:
-- If your environment contains packages installed in editable mode (`pip install -e`), you can choose to ignore them during packing and reinstall them later inside the Dockerfile.
-- Example:
+Keep the large archives outside the Git/Docker source context. Each named
+context must contain a file named exactly `myenv.tar.gz`:
 
 ```bash
-conda pack -n kdc --ignore-editable-packages -o myenv.tar.gz
+mkdir -p \
+  /mnt/pqssd/docker_envs/classic \
+  /mnt/pqssd/docker_envs/lingbot-v1 \
+  /mnt/pqssd/docker_envs/lingbot-v2
+
+conda-pack \
+  -n kdc_dev \
+  --ignore-editable-packages \
+  -o /mnt/pqssd/docker_envs/classic/myenv.tar.gz
+
+conda-pack \
+  -n kdc_vla \
+  --ignore-editable-packages \
+  -o /mnt/pqssd/docker_envs/lingbot-v1/myenv.tar.gz
 ```
 
-4. Place the resulting myenv.tar.gz in your project root directory.
+`--ignore-editable-packages` is required because the unified repository,
+LeRobot and LingBot are editable installs on the workstation. The Dockerfiles
+reinstall their pinned source copies after unpacking.
+
+Create v2 from the pinned v2 submodule. Do not reuse `lerobot_hil`: its Python
+version is suitable, but its PyTorch version does not match LingBot-v2. Run the
+wrapper on Ubuntu 22.04/glibc 2.35 (for example, the cloud builder), not on the
+current Ubuntu 20.04/glibc 2.31 workstation. It first installs the exact Torch
+stack, resolves/downloads the official wheel from that runtime tuple, verifies
+the wheel's GLIBC symbol requirements, and then resumes upstream setup:
+
+```bash
+docker/create_lingbot_v2_env.sh
+
+conda-pack \
+  -n lingbotvla_v2 \
+  --ignore-editable-packages \
+  -o /mnt/pqssd/docker_envs/lingbot-v2/myenv.tar.gz
+```
+
+The v2 setup script verifies `torch.cuda.is_available()`, so the builder also
+needs GPU passthrough. Driver 575.57.08/CUDA 12.9 is sufficient for the target
+Torch CUDA runtime, but a new driver does not compensate for an old glibc.
+
+Select flash-attn from the actual Torch runtime, not from the maximum CUDA
+version printed by `nvidia-smi`. The resolver checks Python, the Torch
+major/minor version, `torch.version.cuda`, CPU architecture and
+`torch._C._GLIBCXX_USE_CXX11_ABI`, then requires an exact asset from the
+official release. After download, it also scans the wheel's shared libraries
+for their newest `GLIBC_*` symbol and compares it with the target system:
+
+```bash
+conda run -n kdc_vla \
+  python docker/flash_attn_wheel.py --dry-run
+
+conda run -n lingbotvla_v2 \
+  python docker/flash_attn_wheel.py \
+  --version 2.8.3 \
+  --download-dir /mnt/pqssd/wheelhouse/flash-attn-v2.8.3
+```
+
+For the current v2 target, the required tuple is Python 3.12, Torch 2.8,
+CUDA 12.x and CXX11 ABI `TRUE`, which resolves to:
+
+```text
+flash_attn-2.8.3+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
+```
+
+Pass the downloaded file to `tools/create_train_env.sh --flash-attn-wheel`.
+Never substitute an ABI `FALSE`, different Torch minor, or different CPython
+tag wheel merely because pip accepts its filename.
+
+The current LingBot-v1 environment is a deliberate exception: the official
+2.8.3 cp310/Torch-2.7 wheel matches its visible tuple but requires GLIBC 2.32,
+so it fails to import on this glibc 2.31 host. Keep using the locally proven
+wheel:
+
+```text
+/mnt/pqssd/wheelhouse/flash_attn_2.7.0.post2_kdc_vla/flash_attn-2.7.0.post2-cp310-cp310-linux_x86_64.whl
+sha256: b46d91bedacbd1ffd5f16f0ab3733bb07e1eeee013051fc3674a2f13cb8e8dde
+```
+
+It imports successfully with Python 3.10, Torch 2.7.1+cu126 and CXX11 ABI
+`TRUE`. Re-evaluate it only when the v1 base system or Torch tuple changes.
+
+After the environments are ready, the packaging commands above can also be
+run safely through:
+
+```bash
+docker/package_conda_envs.sh classic
+docker/package_conda_envs.sh lingbot-v1
+docker/package_conda_envs.sh lingbot-v2
+```
+
+The wrapper refuses to overwrite existing archives and writes a companion
+SHA-256 file. It also sets conda-pack's temporary directory under
+`/mnt/pqssd/docker_envs/.tmp`; Codex/Desktop sandboxes often provide a
+size-limited private temp directory even when `/tmp` itself has free space.
 
 ---
 
-## 3️⃣ Build the Project Image with Dockerfile
+## 3️⃣ Build backend images
+
+Use the repository scripts. They verify pinned submodule commits and pass each
+archive through a BuildKit named context:
+
+```bash
+CLASSIC_ENV_ARCHIVE=/mnt/pqssd/docker_envs/classic/myenv.tar.gz \
+  docker/build_classic.sh
+
+LINGBOT_ENV_ARCHIVE=/mnt/pqssd/docker_envs/lingbot-v1/myenv.tar.gz \
+  docker/build_lingbot.sh
+
+LINGBOT_V2_ENV_ARCHIVE=/mnt/pqssd/docker_envs/lingbot-v2/myenv.tar.gz \
+  docker/build_lingbot_v2.sh
+
+docker/build_openpi.sh
+```
+
+Add `DRY_RUN=1` to any command to inspect it without building.
 
 ⚠️ Important:
-- Ensure your outputs/ folder contains only one set of model files and their corresponding config files intended for submission. Including unnecessary files will significantly increase the Docker image size.
+- Checkpoints, pretrained weights, datasets and credentials must not enter the
+  image. Mount them read-only at runtime.
 
 ### Below is a working **Dockerfile **：
 
@@ -121,19 +227,15 @@ conda pack -n kdc --ignore-editable-packages -o myenv.tar.gz
 
 ---
 
-## 4️⃣ Build and Export the Docker Image as a TAR File
-
-Place the Dockerfile in your project root, then run:
-```bash
-docker build -t kdc_v0 .
-```
+## 4️⃣ Export a Docker image as a TAR file
 
 Export the image:
+
 ```bash
-docker save -o kdc_v0.tar kdc_v0:latest
+docker save -o kuavo-classic.tar kuavo-classic:latest
 ```
 
-Replace kdc_v0 with your actual image name if different.
+Replace the image and output names for LingBot-v1/v2 or OpenPI.
 
 ---
 

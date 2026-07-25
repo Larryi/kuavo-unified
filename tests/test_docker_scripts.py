@@ -94,3 +94,32 @@ def test_lingbot_image_does_not_persist_credentials_or_ros_addresses() -> None:
     assert "kuavo_diag_env" not in dockerfile
     assert "/opt/kuavo_secrets" not in dockerfile
     assert "192.168." not in dockerfile
+
+
+def test_conda_pack_wrapper_dry_run_is_non_overwriting() -> None:
+    result = subprocess.run(
+        [str(ROOT / "docker/package_conda_envs.sh"), "classic"],
+        cwd=ROOT,
+        env={**os.environ, "DRY_RUN": "1", "DOCKER_ENV_ROOT": "/safe/envs"},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "TMPDIR=/safe/envs/.tmp" in result.stdout
+    assert "conda-pack -n kdc_dev --ignore-editable-packages" in result.stdout
+    assert "/safe/envs/classic/myenv.tar.gz" in result.stdout
+
+
+def test_lingbot_v2_env_dry_run_resolves_wheel_after_torch() -> None:
+    result = subprocess.run(
+        [str(ROOT / "docker/create_lingbot_v2_env.sh")],
+        cwd=ROOT,
+        env={**os.environ, "DRY_RUN": "1"},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.index("torch==2.8.0") < result.stdout.index("flash_attn_wheel.py")
+    assert "--resume --flash-attn-wheel" in result.stdout
