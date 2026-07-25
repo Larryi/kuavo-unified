@@ -7,9 +7,12 @@ import pytest
 
 from tools.kuavo_docker import (
     BACKENDS,
+    TASKS,
     UsageError,
     render_config,
     reject_sensitive_files,
+    stage_classic_checkpoint,
+    stage_qwen_processor,
     validate_checkpoint,
     validate_qwen_bundle,
 )
@@ -38,8 +41,10 @@ def test_backend_routes_share_classic_without_merging_runtimes() -> None:
     assert BACKENDS["openpi"].image == "kuavo-openpi:latest"
     assert BACKENDS["openpi"].tokenizer_required
     assert BACKENDS["lingbot-v1"].qwen_required
-    assert BACKENDS["lingbot-v2"].ros_ready
+    assert BACKENDS["lingbot-v2"].delivery_paused
     assert BACKENDS["lingbot-v2"].image == "kuavo-lingbot-v2:latest"
+    assert TASKS["task2-dp"].config.endswith("kuavo_env.dp.task2.yaml")
+    assert TASKS["task3-act"].config.endswith("kuavo_env.act.task3.yaml")
 
 
 def test_qwen_processor_bundle_does_not_require_base_weights(tmp_path: Path) -> None:
@@ -54,6 +59,36 @@ def test_qwen_weight_files_are_warned_but_not_deleted(tmp_path: Path) -> None:
     warnings = validate_qwen_bundle(qwen)
     assert "权重文件" in warnings[0]
     assert (qwen / "model-00001-of-00001.safetensors").is_file()
+
+
+def test_release_qwen_bundle_excludes_base_weights(tmp_path: Path) -> None:
+    qwen = tmp_path / "qwen"
+    make_qwen_processor(qwen, with_weights=True)
+    staged = tmp_path / "staged"
+    stage_qwen_processor(qwen, staged)
+    assert (staged / "config.json").is_file()
+    assert (staged / "tokenizer.json").is_file()
+    assert not list(staged.glob("*.safetensors"))
+
+
+def test_release_classic_bundle_keeps_only_selected_epoch_and_processors(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "run"
+    make_classic_checkpoint(run)
+    epochbest = run / "epochbest"
+    epochbest.mkdir()
+    (epochbest / "model.safetensors").write_bytes(b"best")
+    epochold = run / "epochold"
+    epochold.mkdir()
+    (epochold / "model.safetensors").write_bytes(b"old")
+    (run / "learning_state.pth").write_bytes(b"optimizer")
+    staged = tmp_path / "staged"
+    stage_classic_checkpoint(run, staged, "epochbest")
+    assert (staged / "epochbest/model.safetensors").read_bytes() == b"best"
+    assert (staged / "policy_preprocessor.json").is_file()
+    assert not (staged / "epochold").exists()
+    assert not (staged / "learning_state.pth").exists()
 
 
 def test_lingbot_incremental_checkpoint_is_rejected(tmp_path: Path) -> None:
@@ -169,6 +204,7 @@ def test_release_dry_run_builds_image_without_saving_tar(tmp_path: Path) -> None
             str(ROOT / "scripts/kuavo_docker"),
             "release",
             "--backend", "dp",
+            "--task", "task2-dp",
             "--checkpoint", str(checkpoint),
             "--tag", "kuavo-dp-release:test",
             "--dry-run",
@@ -181,11 +217,36 @@ def test_release_dry_run_builds_image_without_saving_tar(tmp_path: Path) -> None
     assert result.returncode == 0, result.stderr
     assert "Dockerfile.release" in result.stdout
     assert "kuavo-dp-release:test" in result.stdout
+    assert "任务路由: task2-dp -> dp" in result.stdout
+    assert "--build-arg KUAVO_TASK=task2-dp" in result.stdout
     command_line = next(line for line in result.stdout.splitlines() if line.startswith("+ docker"))
     assert "docker save" not in command_line
 
 
-def test_lingbot_v2_shell_uses_ros_server_launcher(tmp_path: Path) -> None:
+def test_release_uses_bounded_build_log(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "classic"
+    make_classic_checkpoint(checkpoint)
+    build_log = tmp_path / "release.log"
+    result = subprocess.run(
+        [
+            str(ROOT / "scripts/kuavo_docker"),
+            "release",
+            "--backend", "dp",
+            "--task", "task2-dp",
+            "--checkpoint", str(checkpoint),
+            "--build-log", str(build_log),
+            "--dry-run",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not build_log.exists()
+
+
+def test_lingbot_v2_delivery_is_blocked_while_paused(tmp_path: Path) -> None:
     checkpoint = tmp_path / "hf_ckpt"
     checkpoint.mkdir()
     (checkpoint / "model.safetensors").write_bytes(b"weights")
@@ -209,9 +270,29 @@ def test_lingbot_v2_shell_uses_ros_server_launcher(tmp_path: Path) -> None:
         capture_output=True,
         check=False,
     )
-    assert result.returncode == 0, result.stderr
-    assert "--entrypoint bash kuavo-lingbot-v2:latest" in result.stdout
-    assert "docker/start_lingbot_v2_ros.sh bash" in result.stdout
+    assert result.returncode == 2
+    assert "交付适配已按操作者决定暂缓" in result.stderr
+
+
+def test_backend_task_mismatch_is_rejected(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "classic"
+    make_classic_checkpoint(checkpoint)
+    result = subprocess.run(
+        [
+            str(ROOT / "scripts/kuavo_docker"),
+            "release",
+            "--backend", "act",
+            "--task", "task2-dp",
+            "--checkpoint", str(checkpoint),
+            "--dry-run",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "绑定 backend=dp" in result.stderr
 
 
 def test_export_is_the_only_command_that_calls_docker_save(tmp_path: Path) -> None:
@@ -242,6 +323,11 @@ def test_release_dockerfile_keeps_manual_entrypoint_and_no_secrets() -> None:
     assert (
         "COPY --from=deploy_config /kuavo_env.yaml "
         "/root/kuavo_data_challenge/configs/deploy/kuavo_env.yaml"
+        in dockerfile
+    )
+    assert (
+        "COPY --from=release_manifest /release_manifest.json "
+        "/etc/kuavo/release_manifest.json"
         in dockerfile
     )
     assert "TOKEN" not in dockerfile

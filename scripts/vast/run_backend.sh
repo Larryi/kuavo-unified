@@ -4,6 +4,7 @@ umask 077
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 : "${MODEL_BACKEND:?Set MODEL_BACKEND to dp, act, openpi, lingbot-v1, or lingbot-v2}"
+: "${TRAINING_TASK:?Set TRAINING_TASK to task1, task2, or task3}"
 : "${DRY_RUN:=0}"
 : "${CODE_DIR:=${ROOT}}"
 : "${WORK_ROOT:=/workspace/kuavo_runs/${MODEL_BACKEND}}"
@@ -23,11 +24,16 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 : "${HF_DOWNLOAD_WORKERS:=16}"
 : "${PYTHON_BIN:=python}"
 : "${PREPARE_ENV:=1}"
+: "${RESUME_MODE:=none}"
+: "${RESUME_REPO:=}"
+: "${RESUME_RUN_ID:=}"
 
 case "${MODEL_BACKEND}" in
   dp|act|openpi|lingbot-v1|lingbot-v2) ;;
   *) echo "Unsupported MODEL_BACKEND=${MODEL_BACKEND}" >&2; exit 2 ;;
 esac
+source "${ROOT}/scripts/vast/job_profile.sh"
+apply_vast_job_profile
 for value in DRY_RUN AUTO_STOP_INSTANCE AUTO_STOP_ON_FAILURE AUTO_STOP_ON_UPLOAD_FAILURE MODEL_REPO_PRIVATE PREPARE_ENV; do
   [[ "${!value}" == "0" || "${!value}" == "1" ]] || {
     echo "${value} must be 0 or 1, got ${!value}" >&2
@@ -35,6 +41,17 @@ for value in DRY_RUN AUTO_STOP_INSTANCE AUTO_STOP_ON_FAILURE AUTO_STOP_ON_UPLOAD
   }
 done
 [[ "${GPU_COUNT}" =~ ^[1-9][0-9]*$ ]] || { echo "GPU_COUNT must be a positive integer" >&2; exit 2; }
+case "${RESUME_MODE}" in
+  none|hf) ;;
+  *) echo "RESUME_MODE must be none or hf" >&2; exit 2 ;;
+esac
+if [[ "${RESUME_MODE}" == "hf" ]]; then
+  : "${RESUME_REPO:=${MODEL_REPO:-}}"
+  [[ -n "${RESUME_REPO}" && -n "${RESUME_RUN_ID}" ]] || {
+    echo "RESUME_MODE=hf requires RESUME_REPO and RESUME_RUN_ID" >&2
+    exit 2
+  }
+fi
 IFS=',' read -r -a selected_gpu_ids <<<"${GPU_IDS}"
 (( ${#selected_gpu_ids[@]} == GPU_COUNT )) || {
   echo "GPU_IDS=${GPU_IDS} selects ${#selected_gpu_ids[@]} devices, expected ${GPU_COUNT}" >&2
@@ -43,10 +60,12 @@ IFS=',' read -r -a selected_gpu_ids <<<"${GPU_IDS}"
 
 describe_profile() {
   echo "Backend: ${MODEL_BACKEND}"
+  echo "Task: ${TRAINING_TASK}"
   echo "Code: ${CODE_DIR}"
   echo "Work root: ${WORK_ROOT}"
   echo "Run: ${RUN_ID}"
   echo "GPUs: ${GPU_IDS}"
+  echo "Resume: ${RESUME_MODE}${RESUME_RUN_ID:+ run=${RESUME_RUN_ID}}"
   case "${MODEL_BACKEND}" in
     dp)
       echo "Pretrained: torchvision ResNet18 ImageNet weights (resolved by the training environment)"
@@ -81,7 +100,7 @@ describe_profile() {
 
 describe_profile
 if [[ "${DRY_RUN}" == "1" ]]; then
-  for name in HF_TOKEN WANDB_API_KEY SERVERCHAN_SENDKEY VAST_API_KEY DATASET_REPO MODEL_REPO; do
+  for name in HF_TOKEN WANDB_API_KEY SERVERCHAN_SENDKEY VAST_API_KEY DATASET_REPO MODEL_REPO RESUME_REPO; do
     if [[ -n "${!name:-}" ]]; then
       echo "${name}=set"
     else
@@ -109,11 +128,46 @@ fi
 
 LOG_DIR="${WORK_ROOT}/logs/${RUN_ID}"
 PIPELINE_LOG="${LOG_DIR}/pipeline.log"
+STATUS_FILE="${LOG_DIR}/status.json"
 PIPELINE_PHASE="bootstrap"
 UPLOAD_STATUS="not_started"
 TRAIN_STARTED=0
 mkdir -p "${LOG_DIR}"
 exec > >(tee -a "${PIPELINE_LOG}") 2>&1
+
+write_status() {
+  local state="$1"
+  STATUS_STATE="${state}" STATUS_PHASE="${PIPELINE_PHASE}" \
+    STATUS_UPLOAD="${UPLOAD_STATUS}" STATUS_FILE="${STATUS_FILE}" \
+    STATUS_RUN_ID="${RUN_ID}" STATUS_TASK="${TRAINING_TASK}" \
+    STATUS_BACKEND="${MODEL_BACKEND}" "${PYTHON_BIN}" - <<'PY'
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+path = Path(os.environ["STATUS_FILE"])
+tmp = path.with_suffix(".tmp")
+tmp.write_text(json.dumps({
+    "schema_version": 1,
+    "state": os.environ["STATUS_STATE"],
+    "phase": os.environ["STATUS_PHASE"],
+    "upload": os.environ["STATUS_UPLOAD"],
+    "run_id": os.environ["STATUS_RUN_ID"],
+    "task": os.environ["STATUS_TASK"],
+    "backend": os.environ["STATUS_BACKEND"],
+    "updated_at": datetime.now(timezone.utc).isoformat(),
+}, indent=2))
+tmp.replace(path)
+PY
+}
+write_status running
+
+set_phase() {
+  PIPELINE_PHASE="$1"
+  write_status running
+  echo "[phase] ${PIPELINE_PHASE}"
+}
 
 serverchan_url() {
   if [[ -n "${SERVERCHAN_URL}" ]]; then
@@ -172,10 +226,13 @@ on_exit() {
   trap - EXIT
   set +e
   if (( rc == 0 )); then
+    PIPELINE_PHASE="complete"
+    write_status success
     notify "Kuavo ${MODEL_BACKEND} 云训练完成" "Run: ${RUN_ID}
 Model: https://huggingface.co/${MODEL_REPO}
 Upload: ${UPLOAD_STATUS}"
   else
+    write_status failed
     notify "Kuavo ${MODEL_BACKEND} 云训练失败" "Run: ${RUN_ID}
 Phase: ${PIPELINE_PHASE}
 Exit: ${rc}
@@ -197,7 +254,7 @@ require_command() {
 
 prepare_classic_environment() {
   [[ "${PREPARE_ENV}" == "1" ]] || return 0
-  PIPELINE_PHASE="prepare ${MODEL_BACKEND} environment"
+  set_phase "prepare ${MODEL_BACKEND} environment"
   "${PYTHON_BIN}" -m pip install --upgrade uv
   uv pip install --python "${PYTHON_BIN}" -r "${CODE_DIR}/requirements_train_cloud.txt"
 }
@@ -228,10 +285,17 @@ download_hf() {
     --local-dir "${local_dir}" --max-workers "${HF_DOWNLOAD_WORKERS}"
 }
 
+download_resume() {
+  local destination="$1"
+  [[ "${RESUME_MODE}" == "hf" ]] || return 0
+  set_phase "download resume checkpoint"
+  download_hf "${RESUME_REPO}" "${destination}" model
+}
+
 upload_directory() {
   local source_dir="$1"
   [[ -d "${source_dir}" ]] || { echo "Upload directory is missing: ${source_dir}" >&2; return 1; }
-  PIPELINE_PHASE="upload model"
+  set_phase "upload model"
   local repo_args=(repo create "${MODEL_REPO}" --repo-type model --exist-ok)
   [[ "${MODEL_REPO_PRIVATE}" == "1" ]] && repo_args+=(--private)
   hf "${repo_args[@]}"
@@ -247,9 +311,13 @@ run_classic() {
   method_name="${METHOD_NAME:-${MODEL_BACKEND}_cloud}"
   output_base="${WORK_ROOT}/outputs/${MODEL_BACKEND}"
   run_dir="${output_base}/run_${RUN_ID}"
-  PIPELINE_PHASE="download dataset"
+  set_phase "download dataset"
   download_hf "${DATASET_REPO}" "${DATASET_ROOT}" dataset
-  PIPELINE_PHASE="train ${MODEL_BACKEND}"
+  if [[ "${RESUME_MODE}" == "hf" ]]; then
+    run_dir="${output_base}/run_${RESUME_RUN_ID}"
+    download_resume "${run_dir}"
+  fi
+  set_phase "train ${MODEL_BACKEND}"
   TRAIN_STARTED=1
   local overrides=(
     --config-path=../configs/policy
@@ -265,6 +333,9 @@ run_classic() {
   [[ -n "${TRAIN_BATCH_SIZE:-}" ]] && overrides+=("training.batch_size=${TRAIN_BATCH_SIZE}")
   [[ -n "${GRAD_ACCUM_STEPS:-}" ]] && overrides+=("training.accumulation_steps=${GRAD_ACCUM_STEPS}")
   [[ -n "${TRAIN_MAX_STEPS:-}" ]] && overrides+=("training.max_training_step=${TRAIN_MAX_STEPS}")
+  if [[ "${RESUME_MODE}" == "hf" ]]; then
+    overrides+=("training.resume=true" "training.resume_timestamp=run_${RESUME_RUN_ID#run_}")
+  fi
   if (( GPU_COUNT > 1 )); then
     require_command accelerate
     (cd "${CODE_DIR}" && accelerate launch --multi_gpu \
@@ -334,10 +405,16 @@ case "${MODEL_BACKEND}" in
     run_classic
     ;;
   openpi)
-    PIPELINE_PHASE="OpenPI delegated pipeline"
+    set_phase "OpenPI delegated pipeline"
     TRAIN_STARTED=1
+    if [[ "${RESUME_MODE}" == "hf" && "${RESUME_REPO}" != "${MODEL_REPO}" ]]; then
+      echo "OpenPI resume currently requires RESUME_REPO=MODEL_REPO." >&2
+      exit 2
+    fi
     child_serverchan="${SERVERCHAN_SENDKEY}"
     SERVERCHAN_SENDKEY="" AUTO_STOP_INSTANCE=0 \
+      RESUME="$([[ "${RESUME_MODE}" == "hf" ]] && echo 1 || echo 0)" \
+      RUN_ID="${RESUME_RUN_ID:-${RUN_ID}}" \
       CODE_DIR="${CODE_DIR}/third_party/openpi-kuavo" \
       WORK_ROOT="${WORK_ROOT}" \
       bash "${CODE_DIR}/third_party/openpi-kuavo/scripts/vast/run_pi05_pipeline.sh"
@@ -349,13 +426,16 @@ case "${MODEL_BACKEND}" in
     fi
     ;;
   lingbot-v1)
-    PIPELINE_PHASE="LingBot-v1 delegated pipeline"
+    set_phase "LingBot-v1 delegated pipeline"
     TRAIN_STARTED=1
     child_serverchan="${SERVERCHAN_SENDKEY}"
     child_serverchan_url="${SERVERCHAN_URL}"
     SERVERCHAN_SENDKEY="" SERVERCHAN_URL="" AUTO_STOP_INSTANCE=0 \
       CODE_DIR="${CODE_DIR}" \
       LINGBOT_ROOT="${CODE_DIR}/third_party/lingbot-vla" \
+      RESUME="$([[ "${RESUME_MODE}" == "hf" ]] && echo 1 || echo 0)" \
+      RESUME_REPO="${RESUME_REPO}" \
+      RUN_ID="${RESUME_RUN_ID:-${RUN_ID}}" \
       WORK_ROOT="${WORK_ROOT}" \
       bash "${CODE_DIR}/scripts/run_task1_lingbot_full_pipeline.sh"
     SERVERCHAN_SENDKEY="${child_serverchan}"

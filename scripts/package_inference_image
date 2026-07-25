@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+TASK=""
+ALGORITHM=""
+CHECKPOINT=""
+CHECKPOINT_SUBPATH=""
+QWEN=""
+NORM_STATS=""
+TOKENIZER=""
+RUNTIME_ASSETS=""
+BASE_IMAGE=""
+TAG=""
+SAVE_TAR=""
+DRY_RUN=0
+YES=0
+
+usage() {
+    cat <<'EOF'
+Usage:
+  scripts/package_inference_image \
+    --task task1|task2|task3 \
+    --algorithm openpi|lingbot-v1|dp|act \
+    --checkpoint /path/to/checkpoint \
+    [--checkpoint-subpath epochbest] [--qwen DIR] [--norm-stats FILE]
+    [--tokenizer FILE] [--runtime-assets DIR] [--base-image IMAGE]
+    [--tag IMAGE:TAG] [--save-tar FILE] [--yes] [--dry-run]
+
+Supported delivery pairs:
+  task1 + openpi
+  task1 + lingbot-v1
+  task2 + dp
+  task3 + act
+
+The derived inference image is always built. docker save is only called when
+--save-tar is present.
+EOF
+}
+
+while (($#)); do
+    case "$1" in
+        --task) TASK="${2:?--task requires a value}"; shift 2 ;;
+        --algorithm) ALGORITHM="${2:?--algorithm requires a value}"; shift 2 ;;
+        --checkpoint) CHECKPOINT="${2:?--checkpoint requires a path}"; shift 2 ;;
+        --checkpoint-subpath) CHECKPOINT_SUBPATH="${2:?--checkpoint-subpath requires a value}"; shift 2 ;;
+        --qwen) QWEN="${2:?--qwen requires a path}"; shift 2 ;;
+        --norm-stats) NORM_STATS="${2:?--norm-stats requires a path}"; shift 2 ;;
+        --tokenizer) TOKENIZER="${2:?--tokenizer requires a path}"; shift 2 ;;
+        --runtime-assets) RUNTIME_ASSETS="${2:?--runtime-assets requires a path}"; shift 2 ;;
+        --base-image) BASE_IMAGE="${2:?--base-image requires a value}"; shift 2 ;;
+        --tag) TAG="${2:?--tag requires a value}"; shift 2 ;;
+        --save-tar) SAVE_TAR="${2:?--save-tar requires a path}"; shift 2 ;;
+        --yes) YES=1; shift ;;
+        --dry-run) DRY_RUN=1; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
+    esac
+done
+
+[[ -n "${TASK}" && -n "${ALGORITHM}" && -n "${CHECKPOINT}" ]] || {
+    usage >&2
+    exit 2
+}
+case "${TASK}:${ALGORITHM}" in
+    task1:openpi) PROFILE="task1-openpi" ;;
+    task1:lingbot-v1) PROFILE="task1-lingbot-v1" ;;
+    task2:dp) PROFILE="task2-dp" ;;
+    task3:act) PROFILE="task3-act" ;;
+    *:lingbot-v2)
+        echo "LingBot-v2 delivery is paused." >&2
+        exit 2
+        ;;
+    *)
+        echo "Unsupported task/algorithm pair: ${TASK} + ${ALGORITHM}" >&2
+        exit 2
+        ;;
+esac
+
+release=(
+    "${ROOT}/scripts/kuavo_docker" release
+    --backend "${ALGORITHM}"
+    --task "${PROFILE}"
+    --checkpoint "${CHECKPOINT}"
+)
+[[ -z "${CHECKPOINT_SUBPATH}" ]] || release+=(--checkpoint-subpath "${CHECKPOINT_SUBPATH}")
+[[ -z "${QWEN}" ]] || release+=(--qwen "${QWEN}")
+[[ -z "${NORM_STATS}" ]] || release+=(--norm-stats "${NORM_STATS}")
+[[ -z "${TOKENIZER}" ]] || release+=(--tokenizer "${TOKENIZER}")
+[[ -z "${RUNTIME_ASSETS}" ]] || release+=(--runtime-assets "${RUNTIME_ASSETS}")
+[[ -z "${BASE_IMAGE}" ]] || release+=(--image "${BASE_IMAGE}")
+[[ -z "${TAG}" ]] || release+=(--tag "${TAG}")
+[[ "${YES}" == "0" ]] || release+=(--yes)
+[[ "${DRY_RUN}" == "0" ]] || release+=(--dry-run)
+"${release[@]}"
+
+if [[ -n "${SAVE_TAR}" ]]; then
+    image="${TAG:-kuavo-${PROFILE}-release:latest}"
+    export_command=(
+        "${ROOT}/scripts/kuavo_docker" export
+        --image "${image}"
+        --output "${SAVE_TAR}"
+        --yes
+    )
+    [[ "${DRY_RUN}" == "0" ]] || export_command+=(--dry-run)
+    "${export_command[@]}"
+else
+    echo "TAR export skipped. The inference image remains in Docker only."
+fi

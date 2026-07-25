@@ -10,9 +10,18 @@ scripts/kuavo_docker
 ACT、DP、LingBot-v1、LingBot-v2 或 OpenPI。所有操作也支持完整命令行
 参数，便于复现和云端脚本调用。
 
-仓库内新增的 ACT、DP、LingBot-v1 模板以及现有 OpenPI/LingBot-v2
-模板均以 Task1 右臂 + Leju 夹爪为安全起点。Task2 双臂/双腕相机和
-Task3 Qiangnao 末端必须传入对应的 `--config`，不能只修改 checkpoint。
+最终交付使用显式任务矩阵，CLI 会拒绝模型与任务错配：
+
+| `--task` | backend | 机器人配置 |
+|---|---|---|
+| `task1-openpi` | `openpi` | Task1 右臂 + Leju 夹爪 |
+| `task1-lingbot-v1` | `lingbot-v1` | Task1 右臂 + Leju 夹爪、旧权重绝对动作 |
+| `task2-dp` | `dp` | Task2 双臂 + 双 Leju 夹爪 + 三相机 |
+| `task3-act` | `act` | Task3 右臂 + Qiangnao 末端 |
+
+每个 backend 都有上述唯一默认任务，也建议在自动化命令中显式写出
+`--task`。自定义 `--config` 只能覆盖同一模型/任务的细节，不能绕过任务
+绑定。LingBot-v2 当前暂缓，CLI 会阻止其 `shell` 和 `release`。
 
 ## 安全边界
 
@@ -27,6 +36,42 @@ Task3 Qiangnao 末端必须传入对应的 `--config`，不能只修改 checkpoi
   固化进镜像。
 
 ## 构建环境镜像
+
+推荐通过基础镜像入口操作。默认只检查镜像存在，不生成 TAR：
+
+```bash
+scripts/kuavo_base_image --backend dp
+scripts/kuavo_base_image --backend act       # 与 DP 共用 Classic
+scripts/kuavo_base_image --backend openpi
+scripts/kuavo_base_image --backend lingbot-v1
+```
+
+需要重建时显式加入 `--build`。Classic 与 LingBot 还需要环境归档：
+
+```bash
+scripts/kuavo_base_image \
+  --backend dp \
+  --build \
+  --env-archive /mnt/pqssd/docker_envs/classic/myenv.tar.gz
+
+scripts/kuavo_base_image \
+  --backend lingbot-v1 \
+  --build \
+  --env-archive /mnt/pqssd/docker_envs/lingbot-v1/myenv.tar.gz
+
+scripts/kuavo_base_image --backend openpi --build
+```
+
+仅在需要把基础环境搬到离线机器时导出：
+
+```bash
+scripts/kuavo_base_image \
+  --backend openpi \
+  --save-tar /mnt/pqssd/releases/kuavo-openpi-base.tar
+```
+
+输出文件存在时拒绝覆盖。基础镜像不包含训练 checkpoint、任务 norm stats、
+数据集或凭据。
 
 Classic ACT/DP：
 
@@ -54,17 +99,7 @@ OpenPI 复用已经构建的 `kuavo-classic:latest`：
 scripts/kuavo_docker build --backend openpi
 ```
 
-LingBot-v2 同样复用 `kuavo-classic:latest`，在镜像内增加独立的
-Python 3.12/PyTorch 2.8 Server 环境：
-
-```bash
-scripts/kuavo_docker build \
-  --backend lingbot-v2 \
-  --env-archive /mnt/pqssd/docker_envs/lingbot-v2/myenv.tar.gz
-```
-
-ROS Client 与 Server 位于同一镜像但不混装 Python 依赖。`shell` 会打印
-`docker/start_lingbot_v2_ros.sh bash`，由操作者审核 YAML 后手动执行。
+LingBot-v2 环境与最终镜像适配已按操作者决定暂缓，不属于本轮交付。
 
 ## 测试阶段：只读挂载并进入 shell
 
@@ -157,15 +192,41 @@ scripts/kuavo_docker shell ... --dry-run
 
 ## 最终 release 镜像
 
+面向操作者的推理打包入口是：
+
+```bash
+scripts/package_inference_image \
+  --task task2 \
+  --algorithm dp \
+  --checkpoint /path/to/dp/run \
+  --checkpoint-subpath epochbest
+```
+
+它根据任务与算法路由到同一个 release 构建器。默认只生成 Docker 镜像；
+只有显式传 `--save-tar /path/image.tar` 才随后执行 `docker save`。
+自动化调用应增加 `--yes`，人工交互时会在固化资产前确认。
+
 将同样的测试资产固化进派生镜像：
 
 ```bash
 scripts/kuavo_docker release \
   --backend lingbot-v1 \
+  --task task1-lingbot-v1 \
   --checkpoint /data/lingbot/hf_ckpt \
   --qwen /data/runtime/Qwen2.5-VL-3B-Instruct-processor \
   --norm-stats /data/lingbot/norm_stats.json \
   --tag kuavo-lingbot-v1-release:task1
+```
+
+等价的新入口：
+
+```bash
+scripts/package_inference_image \
+  --task task1 \
+  --algorithm lingbot-v1 \
+  --checkpoint /data/lingbot/hf_ckpt \
+  --qwen /data/runtime/Qwen2.5_VL \
+  --norm-stats /data/lingbot/norm_stats.json
 ```
 
 统一镜像内路径：
@@ -180,6 +241,18 @@ scripts/kuavo_docker release \
 | 已渲染 deploy YAML | `configs/deploy/kuavo_env.yaml`（另存 `kuavo_env.release.yaml`） |
 
 release 镜像仍以 `bash` 为默认入口，不自动发布动作。
+每个镜像还包含 `/etc/kuavo/release_manifest.json`，记录 backend、任务、
+policy 类型、容器内 checkpoint 路径和基础镜像。默认标签为
+`kuavo-<task>-release:latest`。
+
+ACT/DP 使用 run 根目录作为 `--checkpoint`，再通过
+`--checkpoint-subpath epochbest` 选择权重。release 只复制选中的 epoch、
+processor 与必要 config，不会把其他 epochs、optimizer、event log 一起
+固化进镜像。
+
+LingBot 的 `--qwen` 可以指向完整本地 Qwen 目录；release 会只提取
+config、tokenizer 和 processor 文件，明确排除 `model*.safetensors`，
+不会修改源目录。
 
 ## 明确导出 TAR
 

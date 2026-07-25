@@ -329,6 +329,16 @@ G 阶段验收：
 
 后续进展：
 
+- 最终镜像流程已拆分为两层：`scripts/kuavo_base_image` 管理不含任务
+  权重的算法基础镜像并可选导出 TAR；`scripts/package_inference_image`
+  按 task + algorithm + checkpoint 生成推理派生镜像，默认不执行
+  `docker save`。任务错配与暂缓的 LingBot-v2 会在构建前失败。
+- VastAI 新入口 `scripts/vast/launch_job.sh` 强制一个实例绑定一个 task
+  和 algorithm；私有 env 提供数据集、输出仓库和凭据，profile 自动选择
+  训练配置及预训练资产。支持从含完整训练状态的 HF 仓库 resume，并通过
+  `status.json` 与 `scripts/vast/status.sh` 提供阶段、上传、有限日志和
+  GPU 快照。真实 Vast 实例仍未连接。
+
 - OpenPI 最终本地门禁已通过：真实 Pi0.5 checkpoint 在统一
   Ubuntu 20.04/ROS Noetic 镜像内由 JAX CUDA Server 加载，ROS Mock
   经 MessagePack WebSocket Client 完成推理闭环。统一

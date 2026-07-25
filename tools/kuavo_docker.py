@@ -37,6 +37,15 @@ class BackendSpec:
     norm_required: bool = False
     tokenizer_required: bool = False
     ros_ready: bool = True
+    delivery_paused: bool = False
+
+
+@dataclass(frozen=True)
+class TaskSpec:
+    key: str
+    backend: str
+    config: str
+    description: str
 
 
 BACKENDS = {
@@ -57,13 +66,36 @@ BACKENDS = {
         "lingbot-v2", "lingbot_v2", "kuavo-lingbot-v2:latest",
         "docker/build_lingbot_v2.sh", "LINGBOT_V2_ENV_ARCHIVE",
         "configs/deploy/kuavo_env.lingbot_v2.yaml",
-        qwen_required=True, norm_required=True,
+        qwen_required=True, norm_required=True, delivery_paused=True,
     ),
     "openpi": BackendSpec(
         "openpi", "client", "kuavo-openpi:latest", "docker/build_openpi.sh",
         None, "configs/deploy/kuavo_env.openpi_client.yaml",
         tokenizer_required=True,
     ),
+}
+
+TASKS = {
+    "task1-openpi": TaskSpec(
+        "task1-openpi", "openpi", "configs/deploy/kuavo_env.openpi_client.yaml",
+        "Task1 right arm + Leju claw, OpenPI Pi0.5",
+    ),
+    "task1-lingbot-v1": TaskSpec(
+        "task1-lingbot-v1", "lingbot-v1", "configs/deploy/kuavo_env.lingbot.yaml",
+        "Task1 right arm + Leju claw, legacy absolute-action LingBot-v1",
+    ),
+    "task2-dp": TaskSpec(
+        "task2-dp", "dp", "configs/deploy/kuavo_env.dp.task2.yaml",
+        "Task2 bimanual + dual Leju claws, Diffusion Policy",
+    ),
+    "task3-act": TaskSpec(
+        "task3-act", "act", "configs/deploy/kuavo_env.act.task3.yaml",
+        "Task3 right arm + Qiangnao end effector, ACT",
+    ),
+}
+
+DEFAULT_TASK_BY_BACKEND = {
+    task.backend: task.key for task in TASKS.values()
 }
 
 
@@ -79,6 +111,33 @@ def run(command: list[str], *, dry_run: bool, env: dict[str, str] | None = None)
     print(f"+ {quote_command(command)}")
     if not dry_run:
         subprocess.run(command, cwd=REPO_ROOT, env=env, check=True)
+
+
+def run_bounded_build(
+    command: list[str],
+    *,
+    dry_run: bool,
+    log_path: Path,
+) -> None:
+    print(f"+ {quote_command(command)}")
+    if dry_run:
+        return
+    print(f"Docker 完整构建日志: {log_path}")
+    with log_path.open("w", encoding="utf-8") as log:
+        result = subprocess.run(
+            command,
+            cwd=REPO_ROOT,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+    if result.returncode:
+        print("Docker 构建失败，末尾 80 行：", file=sys.stderr)
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        print("\n".join(lines[-80:]), file=sys.stderr)
+        raise subprocess.CalledProcessError(result.returncode, command)
+    print("Docker release 镜像构建完成。")
 
 
 def prompt_choice(title: str, choices: list[str]) -> str:
@@ -156,7 +215,7 @@ def validate_qwen_bundle(path: Path) -> list[str]:
         warnings.append(
             f"Qwen 目录含 {len(weights)} 个权重文件（约 {size / 2**30:.1f} GiB）。"
             "完整 LingBot HF checkpoint 推理通常只需 config/tokenizer/processor；"
-            "CLI 不会自动删除这些文件。"
+            "源目录不会被修改，release 镜像会自动排除这些基模权重。"
         )
     return warnings
 
@@ -257,11 +316,36 @@ def reject_sensitive_files(paths: list[Path | None]) -> None:
 
 
 def ensure_ros_ready(spec: BackendSpec, operation: str) -> None:
+    if spec.delivery_paused and operation in {"shell", "release"}:
+        raise UsageError(
+            "LingBot-v2 交付适配已按操作者决定暂缓；"
+            f"已阻止 {operation}，恢复前不得生成或标记最终交付镜像。"
+        )
     if not spec.ros_ready and operation in {"shell", "release"}:
         raise UsageError(
             "LingBot-v2 当前仍是纯 Worker 镜像，尚未包含 ROS Noetic/KuavoBaseEnv；"
             f"已阻止 {operation}，避免误认为可最终交付。"
         )
+
+
+def resolve_task(args: argparse.Namespace, spec: BackendSpec) -> TaskSpec:
+    task_key = args.task or DEFAULT_TASK_BY_BACKEND.get(spec.key)
+    if not task_key:
+        raise UsageError(f"--backend {spec.key} 没有默认任务，必须显式传入 --task")
+    task = TASKS[task_key]
+    if task.backend != spec.key:
+        raise UsageError(
+            f"任务 {task.key} 绑定 backend={task.backend}，不能用于 {spec.key}"
+        )
+    return task
+
+
+def deploy_config_path(args: argparse.Namespace, spec: BackendSpec) -> Path:
+    task = resolve_task(args, spec)
+    return resolve_existing(
+        args.config or str(REPO_ROOT / task.config),
+        kind="deploy config",
+    )
 
 
 def checkpoint_container_path(subpath: str) -> str:
@@ -356,10 +440,7 @@ def prepare_session_config(
     spec: BackendSpec,
     pretrained_path: str,
 ) -> Path:
-    source = resolve_existing(
-        args.config or str(REPO_ROOT / spec.config),
-        kind="deploy config",
-    )
+    source = deploy_config_path(args, spec)
     if args.dry_run:
         return Path("/planned/kuavo_env.yaml")
     session = SESSION_ROOT / f"{spec.key}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
@@ -435,15 +516,64 @@ def context_or_empty(stack: contextlib.ExitStack, path: Path | None, name: str) 
     return directory
 
 
+def stage_qwen_processor(source: Path, destination: Path) -> None:
+    """Copy Qwen runtime metadata while intentionally excluding base weights."""
+    destination.mkdir()
+    for item in source.iterdir():
+        if not item.is_file():
+            continue
+        is_weight = (
+            item.suffix.lower() in WEIGHT_SUFFIXES
+            or item.name.startswith("model-") and item.name.endswith(".safetensors")
+        )
+        if not is_weight:
+            shutil.copy2(item, destination / item.name)
+    validate_qwen_bundle(destination)
+
+
+def stage_classic_checkpoint(
+    source: Path,
+    destination: Path,
+    checkpoint_subpath: str,
+) -> Path:
+    """Keep only deploy processors and the selected ACT/DP checkpoint."""
+    selected = checkpoint_container_path(checkpoint_subpath)
+    cleaned = checkpoint_subpath.strip().strip("/")
+    if not cleaned:
+        shutil.copytree(source, destination)
+        return destination
+
+    selected_source = source / cleaned
+    if not selected_source.is_dir():
+        raise UsageError(
+            f"--checkpoint-subpath 在 checkpoint bundle 中不存在: {selected_source}"
+        )
+    destination.mkdir()
+    selected_destination = destination / cleaned
+    selected_destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(selected_source, selected_destination)
+    for item in source.iterdir():
+        if not item.is_file():
+            continue
+        if (
+            item.name == "config.json"
+            or item.name.startswith("policy_preprocessor")
+            or item.name.startswith("policy_postprocessor")
+        ):
+            shutil.copy2(item, destination / item.name)
+    # The return value documents the unchanged in-container policy path.
+    assert selected == checkpoint_container_path(checkpoint_subpath)
+    return destination
+
+
 def release_command(args: argparse.Namespace, spec: BackendSpec) -> None:
     ensure_ros_ready(spec, "release")
+    task = resolve_task(args, spec)
     checkpoint, qwen, norm, runtime_assets, tokenizer = collect_assets(args, spec)
     reject_sensitive_files([checkpoint, qwen, norm, runtime_assets, tokenizer])
     policy_path = checkpoint_container_path(args.checkpoint_subpath)
-    source_config = resolve_existing(
-        args.config or str(REPO_ROOT / spec.config), kind="deploy config",
-    )
-    tag = args.tag or f"kuavo-{spec.key}-release:latest"
+    source_config = deploy_config_path(args, spec)
+    tag = args.tag or f"kuavo-{task.key}-release:latest"
 
     with contextlib.ExitStack() as stack:
         staging = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="kuavo-release-")))
@@ -463,32 +593,69 @@ def release_command(args: argparse.Namespace, spec: BackendSpec) -> None:
             tokenizer_dir = staging / "tokenizer"
             tokenizer_dir.mkdir()
             shutil.copy2(tokenizer, tokenizer_dir / "tokenizer.model")
+        qwen_dir: Path | None = None
+        if qwen:
+            qwen_dir = staging / "qwen"
+            stage_qwen_processor(qwen, qwen_dir)
+        checkpoint_dir = checkpoint
+        if spec.key in {"act", "dp"}:
+            checkpoint_dir = staging / "checkpoint"
+            stage_classic_checkpoint(
+                checkpoint, checkpoint_dir, args.checkpoint_subpath
+            )
+        manifest_dir = staging / "manifest"
+        manifest_dir.mkdir()
+        (manifest_dir / "release_manifest.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "backend": spec.key,
+                    "policy_type": spec.policy_type,
+                    "task": task.key,
+                    "task_description": task.description,
+                    "checkpoint_path": policy_path,
+                    "base_image": args.image or spec.image,
+                    "manual_start_required": True,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
         contexts = {
-            "checkpoint": checkpoint,
-            "qwen": context_or_empty(stack, qwen, "qwen"),
+            "checkpoint": checkpoint_dir,
+            "qwen": context_or_empty(stack, qwen_dir, "qwen"),
             "norm_stats": context_or_empty(stack, norm_dir, "norm"),
             "runtime_assets": context_or_empty(stack, runtime_assets, "runtime"),
             "tokenizer": context_or_empty(stack, tokenizer_dir, "tokenizer"),
             "deploy_config": config_dir,
+            "release_manifest": manifest_dir,
         }
         command = [
             "docker", "buildx", "build", "--load", "--progress=plain",
             "--build-arg", f"BASE_IMAGE={args.image or spec.image}",
             "--build-arg", f"KUAVO_BACKEND={spec.key}",
+            "--build-arg", f"KUAVO_TASK={task.key}",
             "--build-arg", f"SOURCE_IMAGE={args.image or spec.image}",
         ]
         for name, path in contexts.items():
             command += ["--build-context", f"{name}={path}"]
         command += ["-f", str(REPO_ROOT / "Dockerfile.release"), "-t", tag, str(REPO_ROOT)]
         print(f"最终镜像标签: {tag}")
+        print(f"任务路由: {task.key} -> {spec.key} ({task.description})")
         print("不会执行 docker save；需要 TAR 时单独运行 export。")
         confirm_action(
             "确认将上述 checkpoint/运行资产固化进 release 镜像？",
             yes=args.yes,
             dry_run=args.dry_run,
         )
-        run(command, dry_run=args.dry_run)
+        default_log_name = tag.replace("/", "_").replace(":", "_") + ".build.log"
+        run_bounded_build(
+            command,
+            dry_run=args.dry_run,
+            log_path=Path(args.build_log or f"/tmp/{default_log_name}").expanduser(),
+        )
 
 
 def export_command(args: argparse.Namespace) -> None:
@@ -516,6 +683,7 @@ def make_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("command", nargs="?", choices=["build", "shell", "release", "export"])
     parser.add_argument("--backend", choices=sorted(BACKENDS))
+    parser.add_argument("--task", choices=sorted(TASKS))
     parser.add_argument("--checkpoint")
     parser.add_argument("--checkpoint-subpath", default="")
     parser.add_argument("--qwen")
@@ -527,6 +695,7 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--image")
     parser.add_argument("--tag")
     parser.add_argument("--output")
+    parser.add_argument("--build-log")
     parser.add_argument("--container-name")
     parser.add_argument("--gpus", default="all")
     parser.add_argument("--openpi-config", default="pi05_kuavo")

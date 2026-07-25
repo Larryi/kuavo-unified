@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+BACKEND=""
+BUILD=0
+ENV_ARCHIVE=""
+SAVE_TAR=""
+DRY_RUN=0
+
+usage() {
+    cat <<'EOF'
+Usage:
+  scripts/kuavo_base_image --backend BACKEND [--build]
+      [--env-archive /path/to/myenv.tar.gz]
+      [--save-tar /path/to/base-image.tar] [--dry-run]
+
+BACKEND: dp, act, openpi, lingbot-v1
+By default this only verifies/prints the existing base image. --build rebuilds
+the environment image. TAR export is opt-in through --save-tar.
+EOF
+}
+
+while (($#)); do
+    case "$1" in
+        --backend) BACKEND="${2:?--backend requires a value}"; shift 2 ;;
+        --build) BUILD=1; shift ;;
+        --env-archive) ENV_ARCHIVE="${2:?--env-archive requires a path}"; shift 2 ;;
+        --save-tar) SAVE_TAR="${2:?--save-tar requires a path}"; shift 2 ;;
+        --dry-run) DRY_RUN=1; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
+    esac
+done
+
+case "${BACKEND}" in
+    dp|act)
+        IMAGE="kuavo-classic:latest"
+        BUILD_SCRIPT="${ROOT}/docker/build_classic.sh"
+        ARCHIVE_VAR="CLASSIC_ENV_ARCHIVE"
+        ;;
+    openpi)
+        IMAGE="kuavo-openpi:latest"
+        BUILD_SCRIPT="${ROOT}/docker/build_openpi.sh"
+        ARCHIVE_VAR=""
+        ;;
+    lingbot-v1)
+        IMAGE="kdc_real_task1_lingbot:latest"
+        BUILD_SCRIPT="${ROOT}/docker/build_lingbot.sh"
+        ARCHIVE_VAR="LINGBOT_ENV_ARCHIVE"
+        ;;
+    lingbot-v2)
+        echo "LingBot-v2 delivery is paused." >&2
+        exit 2
+        ;;
+    *)
+        echo "--backend must be dp, act, openpi, or lingbot-v1" >&2
+        exit 2
+        ;;
+esac
+
+if [[ "${BUILD}" == "1" ]]; then
+    if [[ -n "${ARCHIVE_VAR}" ]]; then
+        [[ -n "${ENV_ARCHIVE}" ]] || {
+            echo "--build for ${BACKEND} requires --env-archive myenv.tar.gz" >&2
+            exit 2
+        }
+        if [[ "${DRY_RUN}" == "1" ]]; then
+            printf '%s=%q DRY_RUN=1 %q\n' "${ARCHIVE_VAR}" "${ENV_ARCHIVE}" "${BUILD_SCRIPT}"
+        else
+            env "${ARCHIVE_VAR}=${ENV_ARCHIVE}" "${BUILD_SCRIPT}"
+        fi
+    elif [[ "${DRY_RUN}" == "1" ]]; then
+        printf 'DRY_RUN=1 %q\n' "${BUILD_SCRIPT}"
+    else
+        "${BUILD_SCRIPT}"
+    fi
+fi
+
+if [[ "${DRY_RUN}" != "1" ]]; then
+    if ! inspect_error="$(docker image inspect "${IMAGE}" 2>&1 >/dev/null)"; then
+        if [[ "${inspect_error}" == *"permission denied"* ||
+              "${inspect_error}" == *"Cannot connect to the Docker daemon"* ]]; then
+            echo "Docker daemon is not accessible; cannot verify ${IMAGE}: ${inspect_error}" >&2
+            exit 4
+        fi
+        echo "Base image is missing: ${IMAGE}; rerun with --build." >&2
+        exit 3
+    fi
+fi
+echo "Base image: ${IMAGE}"
+
+if [[ -n "${SAVE_TAR}" ]]; then
+    command=(
+        "${ROOT}/scripts/kuavo_docker" export
+        --image "${IMAGE}"
+        --output "${SAVE_TAR}"
+        --yes
+    )
+    [[ "${DRY_RUN}" == "0" ]] || command+=(--dry-run)
+    "${command[@]}"
+else
+    echo "TAR export skipped. Add --save-tar only when an offline file is required."
+fi

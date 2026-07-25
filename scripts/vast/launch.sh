@@ -3,17 +3,23 @@ set -Eeuo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 : "${MODEL_BACKEND:?Set MODEL_BACKEND to dp, act, openpi, lingbot-v1, or lingbot-v2}"
+: "${TRAINING_TASK:?Set TRAINING_TASK to task1, task2, or task3}"
 : "${DRY_RUN:=0}"
 : "${VAST_SSH_USER:=root}"
 : "${REMOTE_ROOT:=/workspace/kuavo_unified_stack}"
 : "${REMOTE_ENV_FILE:=${REMOTE_ROOT}/.secrets/${MODEL_BACKEND}.env}"
 : "${SYNC_ONLY:=0}"
 : "${DETACH:=1}"
+: "${RESUME_MODE:=none}"
+: "${RESUME_REPO:=}"
+: "${RESUME_RUN_ID:=}"
 
 case "${MODEL_BACKEND}" in
   dp|act|openpi|lingbot-v1|lingbot-v2) ;;
   *) echo "Unsupported MODEL_BACKEND=${MODEL_BACKEND}" >&2; exit 2 ;;
 esac
+source "${ROOT}/scripts/vast/job_profile.sh"
+apply_vast_job_profile
 for value in DRY_RUN SYNC_ONLY DETACH; do
   [[ "${!value}" == "0" || "${!value}" == "1" ]] || {
     echo "${value} must be 0 or 1, got ${!value}" >&2
@@ -26,12 +32,28 @@ for remote_path in "${REMOTE_ROOT}" "${REMOTE_ENV_FILE}"; do
     exit 2
   }
 done
+[[ "${RESUME_MODE}" == "none" || "${RESUME_MODE}" == "hf" ]] || {
+  echo "RESUME_MODE must be none or hf" >&2
+  exit 2
+}
+if [[ "${RESUME_MODE}" == "hf" ]]; then
+  [[ "${RESUME_REPO}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || {
+    echo "Unsafe or missing RESUME_REPO" >&2
+    exit 2
+  }
+  [[ "${RESUME_RUN_ID}" =~ ^[A-Za-z0-9._-]+$ ]] || {
+    echo "Unsafe or missing RESUME_RUN_ID" >&2
+    exit 2
+  }
+fi
 
 echo "Backend: ${MODEL_BACKEND}"
+echo "Task: ${TRAINING_TASK}"
 echo "Remote code: ${REMOTE_ROOT}"
 echo "Remote private env: ${REMOTE_ENV_FILE}"
 if [[ "${DRY_RUN}" == "1" ]]; then
-  MODEL_BACKEND="${MODEL_BACKEND}" DRY_RUN=1 CODE_DIR="${REMOTE_ROOT}" \
+  MODEL_BACKEND="${MODEL_BACKEND}" TRAINING_TASK="${TRAINING_TASK}" \
+    DRY_RUN=1 CODE_DIR="${REMOTE_ROOT}" \
     bash "${ROOT}/scripts/vast/run_backend.sh"
   echo "Launcher dry run complete; SSH, rsync, secret upload, and remote execution were skipped."
   exit 0
@@ -71,8 +93,8 @@ ssh "${ssh_args[@]}" "${remote}" "chmod 600 '${REMOTE_ENV_FILE}'"
 echo "Code and private environment synchronized to ${remote}"
 
 [[ "${SYNC_ONLY}" == "0" ]] || exit 0
-remote_log="${REMOTE_ROOT}/logs/${MODEL_BACKEND}-launcher.log"
-remote_command="cd '${REMOTE_ROOT}' && set -a && source '${REMOTE_ENV_FILE}' && set +a && export MODEL_BACKEND='${MODEL_BACKEND}' CODE_DIR='${REMOTE_ROOT}'"
+remote_log="${REMOTE_ROOT}/logs/${TRAINING_TASK}-${MODEL_BACKEND}-launcher.log"
+remote_command="cd '${REMOTE_ROOT}' && set -a && source '${REMOTE_ENV_FILE}' && set +a && export MODEL_BACKEND='${MODEL_BACKEND}' TRAINING_TASK='${TRAINING_TASK}' CODE_DIR='${REMOTE_ROOT}' RESUME_MODE='${RESUME_MODE}' RESUME_REPO='${RESUME_REPO}' RESUME_RUN_ID='${RESUME_RUN_ID}'"
 if [[ "${DETACH}" == "1" ]]; then
   ssh "${ssh_args[@]}" "${remote}" \
     "${remote_command} && nohup bash scripts/vast/run_backend.sh >>'${remote_log}' 2>&1 </dev/null & echo \$!"

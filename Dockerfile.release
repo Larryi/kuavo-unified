@@ -4,9 +4,11 @@ ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
 ARG KUAVO_BACKEND
+ARG KUAVO_TASK
 ARG SOURCE_IMAGE
 
 LABEL org.kuavo.backend="${KUAVO_BACKEND}" \
+      org.kuavo.task="${KUAVO_TASK}" \
       org.kuavo.source-image="${SOURCE_IMAGE}" \
       org.kuavo.assets="embedded-runtime-only"
 
@@ -17,6 +19,7 @@ COPY --from=runtime_assets / /assets/runtime/
 COPY --from=tokenizer / /assets/tokenizer/
 COPY --from=deploy_config /kuavo_env.yaml /root/kuavo_data_challenge/configs/deploy/kuavo_env.release.yaml
 COPY --from=deploy_config /kuavo_env.yaml /root/kuavo_data_challenge/configs/deploy/kuavo_env.yaml
+COPY --from=release_manifest /release_manifest.json /etc/kuavo/release_manifest.json
 
 # Current Kuavo OpenPI configs use this historical absolute tokenizer path.
 # Keep the embedded asset canonical under /assets and provide a compatibility

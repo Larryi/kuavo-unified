@@ -1,35 +1,74 @@
 # VastAI 统一云端训练入口
 
-统一入口覆盖 `dp`、`act`、`openpi`、`lingbot-v1` 和 `lingbot-v2`：
+一个 VastAI 实例只运行一个任务数据集和一种算法。面向用户的入口同时
+要求 `--task` 与 `--algorithm`：
 
 ```bash
-MODEL_BACKEND=lingbot-v2 DRY_RUN=1 scripts/vast/launch.sh
+scripts/vast/launch_job.sh \
+  --task task2 \
+  --algorithm dp \
+  --dry-run
 ```
 
 Dry-run 只显示模型所需的数据、预训练权重及远端入口，不进行 SSH、下载、
-训练、上传、通知或关机。正式运行前，把示例复制到仓库外并设置为私有：
+训练、上传、通知或关机。当前支持矩阵：
+
+| task | algorithm | 训练配置 |
+|---|---|---|
+| `task1` | `openpi` | Pi0.5 Kuavo Task1 |
+| `task1` | `lingbot-v1` | Task1 LingBot-VLA full pipeline |
+| `task2` | `dp` | `dp_r2_h100.yaml` |
+| `task3` | `act` | `act_config.yaml` + `task=task3` |
+
+LingBot-v2 仍按决定暂缓，入口会在联网前拒绝。正式运行前，把示例复制到
+仓库外并设置为私有：
 
 ```bash
-cp scripts/vast/kuavo_vast.env.example /tmp/kuavo-lingbot-v2.env
-chmod 600 /tmp/kuavo-lingbot-v2.env
-editor /tmp/kuavo-lingbot-v2.env
+cp scripts/vast/kuavo_vast.env.example /tmp/kuavo-task2-dp.env
+chmod 600 /tmp/kuavo-task2-dp.env
+editor /tmp/kuavo-task2-dp.env
 ```
 
 本地启动：
 
 ```bash
-export MODEL_BACKEND=lingbot-v2
-export VAST_SSH_HOST="<Vast SSH host>"
-export VAST_SSH_PORT="<Vast SSH port>"
-export VAST_ENV_FILE=/tmp/kuavo-lingbot-v2.env
-scripts/vast/launch.sh
+scripts/vast/launch_job.sh \
+  --task task2 \
+  --algorithm dp \
+  --env-file /tmp/kuavo-task2-dp.env \
+  --host "<Vast SSH host>" \
+  --port "<Vast SSH port>"
 ```
 
 启动器通过 `rsync` 同步 unified 仓库及已经初始化的子模块内容，排除
 `.git`、虚拟环境、输出、checkpoint、W&B 日志和压缩镜像；私有环境文件
 单独上传到远端 `.secrets/` 并设为 `0600`。默认后台启动，日志位于
-`/workspace/kuavo_unified_stack/logs/<backend>-launcher.log`。设置
+`/workspace/kuavo_unified_stack/logs/<task>-<backend>-launcher.log`。设置
 `DETACH=0` 可前台运行，`SYNC_ONLY=1` 只同步不启动。
+
+## 数据、预训练权重与 resume
+
+私有 env 文件中的 `DATASET_REPO` 指向这一个任务的 LeRobot 数据集，
+`MODEL_REPO` 指向本次训练的输出仓库。远端会自动下载数据集；OpenPI 与
+LingBot 会按 profile 继续下载各自基模和 tokenizer，DP/ACT 只准备
+torchvision ResNet18 公共权重。
+
+从 Hugging Face 完整训练状态续训：
+
+```bash
+scripts/vast/launch_job.sh \
+  --task task2 \
+  --algorithm dp \
+  --env-file /tmp/kuavo-task2-dp.env \
+  --host "<host>" --port "<port>" \
+  --resume-repo owner/task2-dp-full-state \
+  --resume-run-id run_20260711_011552
+```
+
+resume 仓库必须包含 optimizer、processor、RNG/accelerator 或 DCP 等完整
+训练状态，只有推理用 `model.safetensors` 不足以续训。OpenPI 当前要求
+resume 仓库就是 `MODEL_REPO`。LingBot-v1 的 resume 仓库必须保存完整
+`checkpoints/global_step_*` DCP 目录；流水线会在训练前下载到指定 run。
 
 ## 模型与权重
 
@@ -49,10 +88,27 @@ MoGe、Depth 和 DINO 路径会显式传给上游 trainer，避免继承开发�
 覆盖参数一致。默认还会用 `requirements_train_cloud.txt` 补齐依赖；
 已在镜像中预装并验证依赖时，可设置 `PREPARE_ENV=0`。
 
-LingBot-v2 不在运行时临时组合环境。统一入口会要求专用环境严格使用
-Python 3.12、PyTorch 2.8.0、Transformers 4.57.3、Accelerate 1.7.0，并
-验证 FlashAttention 可导入；不满足时会在下载大模型前失败。对应镜像的
-构建与容器启动是下一交付工作包。
+LingBot-v2 云端训练适配暂缓，不进入当前流程。
+
+## 进度跟踪
+
+远端作业持续原子更新：
+
+```text
+/workspace/kuavo_runs/<backend>/logs/<run-id>/status.json
+```
+
+其中包含 task、backend、run id、当前 phase、上传状态、更新时间和最终
+success/failed。查看一次状态、有限日志尾部和 GPU：
+
+```bash
+TRAINING_TASK=task2 MODEL_BACKEND=dp \
+VAST_SSH_HOST="<host>" VAST_SSH_PORT="<port>" \
+scripts/vast/status.sh
+```
+
+持续刷新可增加 `WATCH_SECONDS=30`。脚本每次只读取默认 30 行日志，
+可用 `TAIL_LINES` 调整，不会拉取完整滚动日志。
 
 ## 凭据和生命周期
 

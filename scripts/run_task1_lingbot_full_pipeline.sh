@@ -33,6 +33,8 @@ umask 077
 : "${VAST_INSTANCE_ID:=}"
 : "${VAST_API_KEY:=}"
 : "${STOP_DELAY_SECONDS:=15}"
+: "${RESUME:=0}"
+: "${RESUME_REPO:=}"
 
 if [[ "${DRY_RUN}" == "1" ]]; then
     printf 'LingBot-v1 pipeline dry-run\n'
@@ -52,6 +54,9 @@ fi
 : "${HF_TOKEN:?Set HF_TOKEN with private dataset read and model write access}"
 : "${DATASET_REPO:?Set the private Hugging Face dataset repository ID}"
 : "${MODEL_REPO:?Set the private Hugging Face destination model repository ID}"
+if [[ "${RESUME}" == "1" ]]; then
+    : "${RESUME_REPO:?Set RESUME_REPO to a model repository containing the full DCP run}"
+fi
 
 export HF_TOKEN HF_XET_HIGH_PERFORMANCE=1 PYTHONUNBUFFERED=1
 export GPU_COUNT FLASH_ATTN_VERSION
@@ -390,6 +395,14 @@ done
 
 PIPELINE_PHASE="start heartbeat"
 mkdir -p "${RUN_DIR}"
+if [[ "${RESUME}" == "1" ]] && \
+   ! find "${RUN_DIR}/checkpoints" -mindepth 1 -maxdepth 1 -type d \
+      -name 'global_step_*' -print -quit 2>/dev/null | grep -q .; then
+    PIPELINE_PHASE="download resume DCP"
+    retry 3 hf download "${RESUME_REPO}" \
+        --local-dir "${RUN_DIR}" \
+        --max-workers 16
+fi
 (
     while sleep "${HEARTBEAT_SECONDS}"; do
         loss_line="$(tail -n 1 "${RUN_DIR}/checkpoints/loss.jsonl" 2>/dev/null || true)"
