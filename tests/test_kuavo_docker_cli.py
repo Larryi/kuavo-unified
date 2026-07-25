@@ -101,8 +101,13 @@ def test_shell_dry_run_mounts_checkpoint_and_never_runs_auto_test(tmp_path: Path
     )
     assert result.returncode == 0, result.stderr
     assert f"{checkpoint.resolve()}:/models/checkpoint:ro" in result.stdout
+    assert (
+        "/root/kuavo_data_challenge/configs/deploy/kuavo_env.yaml:ro"
+        in result.stdout
+    )
     assert "--entrypoint bash kuavo-classic:latest" in result.stdout
     assert "容器内人工推理命令" in result.stdout
+    assert "--config configs/deploy/kuavo_env.yaml" in result.stdout
     command_line = next(line for line in result.stdout.splitlines() if line.startswith("+ docker run"))
     assert "script_auto_test.py" not in command_line
 
@@ -173,5 +178,10 @@ def test_release_dockerfile_keeps_manual_entrypoint_and_no_secrets() -> None:
     dockerfile = (ROOT / "Dockerfile.release").read_text(encoding="utf-8")
     assert "ENTRYPOINT []" in dockerfile
     assert 'CMD ["bash"]' in dockerfile
+    assert (
+        "COPY --from=deploy_config /kuavo_env.yaml "
+        "/root/kuavo_data_challenge/configs/deploy/kuavo_env.yaml"
+        in dockerfile
+    )
     assert "TOKEN" not in dockerfile
     assert "PASSWORD" not in dockerfile

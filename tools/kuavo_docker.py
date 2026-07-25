@@ -342,6 +342,8 @@ def shell_command(args: argparse.Namespace, spec: BackendSpec) -> None:
         "--network", "host", "--gpus", args.gpus,
         "-v", f"{checkpoint}:/models/checkpoint:ro",
         "-v", f"{config}:/run/kuavo/kuavo_env.yaml:ro",
+        "-v",
+        f"{config}:/root/kuavo_data_challenge/configs/deploy/kuavo_env.yaml:ro",
     ]
     if qwen:
         command += ["-v", f"{qwen}:/assets/qwen:ro"]
@@ -371,7 +373,7 @@ def shell_command(args: argparse.Namespace, spec: BackendSpec) -> None:
         print("  docker/start_openpi_ros.sh bash")
     print(
         "  python kuavo_deploy/src/scripts/script_auto_test.py "
-        "--task auto_test --config /run/kuavo/kuavo_env.yaml"
+        "--task auto_test --config configs/deploy/kuavo_env.yaml"
     )
     confirm_action(
         "确认已检查 YAML，启动测试容器？",

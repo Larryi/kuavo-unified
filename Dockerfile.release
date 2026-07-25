@@ -16,6 +16,7 @@ COPY --from=norm_stats / /assets/norm_stats/
 COPY --from=runtime_assets / /assets/runtime/
 COPY --from=tokenizer / /assets/tokenizer/
 COPY --from=deploy_config /kuavo_env.yaml /root/kuavo_data_challenge/configs/deploy/kuavo_env.release.yaml
+COPY --from=deploy_config /kuavo_env.yaml /root/kuavo_data_challenge/configs/deploy/kuavo_env.yaml
 
 # Current Kuavo OpenPI configs use this historical absolute tokenizer path.
 # Keep the embedded asset canonical under /assets and provide a compatibility

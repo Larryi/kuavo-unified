@@ -107,8 +107,11 @@ CLI 会为本次测试生成并显示一个待检查 YAML，挂载到：
 
 ```text
 /run/kuavo/kuavo_env.yaml
+/root/kuavo_data_challenge/configs/deploy/kuavo_env.yaml
 ```
 
+两处是同一个只读文件。第二处覆盖镜像内可能属于其他模型的示例配置，
+确保官方标准入口不会因读取旧 `kuavo_env.yaml` 而路由到错误后端。
 交互模式会把完整 YAML 打印出来并等待确认。非交互脚本必须显式传入
 `--yes` 才会真正创建容器；`--dry-run` 不需要确认。
 
@@ -117,7 +120,7 @@ CLI 会为本次测试生成并显示一个待检查 YAML，挂载到：
 ```bash
 python kuavo_deploy/src/scripts/script_auto_test.py \
   --task auto_test \
-  --config /run/kuavo/kuavo_env.yaml
+  --config configs/deploy/kuavo_env.yaml
 ```
 
 使用 `--dry-run` 只打印 Docker 命令，不创建容器：
@@ -148,7 +151,7 @@ scripts/kuavo_docker release \
 | norm stats | `/assets/norm_stats/norm_stats.json` |
 | 其他运行资产 | `/assets/runtime` |
 | OpenPI tokenizer | `/assets/tokenizer/tokenizer.model` |
-| 已渲染 deploy YAML | `configs/deploy/kuavo_env.release.yaml` |
+| 已渲染 deploy YAML | `configs/deploy/kuavo_env.yaml`（另存 `kuavo_env.release.yaml`） |
 
 release 镜像仍以 `bash` 为默认入口，不自动发布动作。
 
