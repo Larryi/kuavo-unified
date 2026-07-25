@@ -93,10 +93,15 @@ OpenPI：
 ```bash
 scripts/kuavo_docker shell \
   --backend openpi \
-  --checkpoint /data/openpi/checkpoint \
+  --checkpoint /data/openpi/45000 \
   --tokenizer /data/paligemma/tokenizer.model \
   --openpi-config pi05_kuavo
 ```
+
+`--checkpoint` 应指向包含 `params/_METADATA` 的训练 step 目录（例如
+`45000`），因为 OpenPI 会在 `--policy.dir` 后追加 `params`。如果误传
+`45000/params`，CLI 会自动提升到父级 step 目录，避免容器内形成错误的
+`/models/checkpoint/params/params` 路径。
 
 当前固定 OpenPI 配置仍使用历史 PaliGemma tokenizer 绝对路径，CLI 会把
 指定文件只读挂载到该路径。进入容器后先启动 Server 和检查 YAML：

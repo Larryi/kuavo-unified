@@ -130,9 +130,10 @@ def test_shell_dry_run_mounts_checkpoint_and_never_runs_auto_test(tmp_path: Path
 
 
 def test_openpi_shell_prints_structured_server_arguments(tmp_path: Path) -> None:
-    checkpoint = tmp_path / "openpi"
-    checkpoint.mkdir()
-    (checkpoint / "_METADATA").write_text("{}", encoding="utf-8")
+    checkpoint = tmp_path / "openpi" / "45000"
+    params = checkpoint / "params"
+    params.mkdir(parents=True)
+    (params / "_METADATA").write_text("{}", encoding="utf-8")
     tokenizer = tmp_path / "tokenizer.model"
     tokenizer.write_text("tokenizer", encoding="utf-8")
 
@@ -141,7 +142,7 @@ def test_openpi_shell_prints_structured_server_arguments(tmp_path: Path) -> None
             str(ROOT / "scripts/kuavo_docker"),
             "shell",
             "--backend", "openpi",
-            "--checkpoint", str(checkpoint),
+            "--checkpoint", str(params),
             "--tokenizer", str(tokenizer),
             "--openpi-config", "pi05_kuavo",
             "--dry-run",
@@ -152,6 +153,8 @@ def test_openpi_shell_prints_structured_server_arguments(tmp_path: Path) -> None
         check=False,
     )
     assert result.returncode == 0, result.stderr
+    assert "自动改用 checkpoint step" in result.stdout
+    assert f"{checkpoint.resolve()}:/models/checkpoint:ro" in result.stdout
     assert "OPENPI_POLICY_CONFIG=pi05_kuavo" in result.stdout
     assert "OPENPI_POLICY_DIR=/models/checkpoint" in result.stdout
     assert "SERVER_ARGS=" not in result.stdout

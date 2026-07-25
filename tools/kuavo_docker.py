@@ -208,9 +208,29 @@ def validate_checkpoint(spec: BackendSpec, path: Path) -> list[str]:
                     "并用 --checkpoint-subpath 指向 epoch 权重目录。"
                 )
     elif spec.key == "openpi":
-        if not any(item.name == "_METADATA" for item in files):
-            warnings.append("未发现 Orbax _METADATA；请确认这是可部署的 OpenPI checkpoint。")
+        metadata = path / "params" / "_METADATA"
+        if not metadata.is_file():
+            raise UsageError(
+                "OpenPI checkpoint 必须是包含 params/_METADATA 的训练 step 目录；"
+                "不要把 params 目录本身挂载为 /models/checkpoint。"
+            )
     return warnings
+
+
+def normalize_checkpoint_bundle(spec: BackendSpec, path: Path) -> Path:
+    """Normalize user-facing checkpoint paths to the runtime bundle root."""
+    if spec.key != "openpi" or not (path / "_METADATA").is_file():
+        return path
+    if path.name != "params":
+        raise UsageError(
+            "检测到 OpenPI Orbax metadata，但目录名不是 params；"
+            "请传入包含 params/_METADATA 的训练 step 目录。"
+        )
+    step_dir = path.parent
+    if not (step_dir / "params" / "_METADATA").is_file():
+        raise UsageError(f"无法确定 OpenPI checkpoint step 目录: {path}")
+    print(f"OpenPI 检测到 params 目录，自动改用 checkpoint step: {step_dir}")
+    return step_dir
 
 
 def reject_sensitive_files(paths: list[Path | None]) -> None:
@@ -277,6 +297,7 @@ def collect_assets(
         prompt_path("Checkpoint bundle 路径", args.checkpoint),
         kind="checkpoint", directory=True,
     )
+    checkpoint = normalize_checkpoint_bundle(spec, checkpoint)
     warnings = validate_checkpoint(spec, checkpoint)
 
     qwen: Path | None = None
