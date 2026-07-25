@@ -50,10 +50,6 @@ if [[ "${DRY_RUN}" == "1" ]]; then
 fi
 
 : "${HF_TOKEN:?Set HF_TOKEN with private dataset read and model write access}"
-: "${CODEBASE_GDOWN_URL:?Set the Google Drive URL of the Kuavo cloud bundle}"
-: "${CODEBASE_SHA256:?Set the SHA-256 of the Kuavo cloud bundle}"
-: "${LINGBOT_CODE_GDOWN_URL:?Set the Google Drive URL of the LingBot-VLA source archive}"
-: "${LINGBOT_CODE_SHA256:?Set the SHA-256 of the LingBot-VLA source archive}"
 : "${DATASET_REPO:?Set the private Hugging Face dataset repository ID}"
 : "${MODEL_REPO:?Set the private Hugging Face destination model repository ID}"
 
@@ -69,8 +65,8 @@ if [[ -n "${WANDB_API_KEY}" ]]; then
     export WANDB_API_KEY WANDB_MODE=online
 fi
 
-CODE_DIR="${WORK_ROOT}/kuavo_unified_stack"
-LINGBOT_ROOT="${WORK_ROOT}/lingbot-vla"
+: "${CODE_DIR:=${WORK_ROOT}/kuavo_unified_stack}"
+: "${LINGBOT_ROOT:=${WORK_ROOT}/lingbot-vla}"
 DATASET_ROOT="${WORK_ROOT}/datasets/lerobot_task1_345"
 LINGBOT_MODEL_ROOT="${WORK_ROOT}/models/LingBotVLA"
 QWEN_MODEL_ROOT="${WORK_ROOT}/models/Qwen2.5_VL"
@@ -236,9 +232,13 @@ PY
 }
 
 PIPELINE_PHASE="download code"
-download_and_extract "${CODEBASE_GDOWN_URL}" "${CODEBASE_SHA256}" \
-    "${WORK_ROOT}/downloads/kuavo.zip" "${WORK_ROOT}/code_extract" \
-    "${CODE_DIR}/kuavo_train/lingbot/tasks/vla/train_lingbotvla.py"
+if [[ ! -e "${CODE_DIR}/kuavo_train/lingbot/tasks/vla/train_lingbotvla.py" ]]; then
+    : "${CODEBASE_GDOWN_URL:?Set CODEBASE_GDOWN_URL when the synchronized Kuavo source is absent}"
+    : "${CODEBASE_SHA256:?Set CODEBASE_SHA256 when the synchronized Kuavo source is absent}"
+    download_and_extract "${CODEBASE_GDOWN_URL}" "${CODEBASE_SHA256}" \
+        "${WORK_ROOT}/downloads/kuavo.zip" "${WORK_ROOT}/code_extract" \
+        "${CODE_DIR}/kuavo_train/lingbot/tasks/vla/train_lingbotvla.py"
+fi
 if [[ ! -e "${CODE_DIR}/kuavo_train/lingbot/tasks/vla/train_lingbotvla.py" ]]; then
     source_root="$(find "${WORK_ROOT}/code_extract" -type f -path '*/kuavo_train/lingbot/tasks/vla/train_lingbotvla.py' -print -quit)"
     [[ -n "${source_root}" ]] || { echo "Kuavo archive lacks the LingBot trainer" >&2; exit 4; }
@@ -247,9 +247,13 @@ if [[ ! -e "${CODE_DIR}/kuavo_train/lingbot/tasks/vla/train_lingbotvla.py" ]]; t
     cp -a "${source_root}/." "${CODE_DIR}/"
 fi
 
-download_and_extract "${LINGBOT_CODE_GDOWN_URL}" "${LINGBOT_CODE_SHA256}" \
-    "${WORK_ROOT}/downloads/lingbot-vla.zip" "${WORK_ROOT}/lingbot_extract" \
-    "${LINGBOT_ROOT}/lingbotvla/models/auto.py"
+if [[ ! -e "${LINGBOT_ROOT}/lingbotvla/models/auto.py" ]]; then
+    : "${LINGBOT_CODE_GDOWN_URL:?Set LINGBOT_CODE_GDOWN_URL when synchronized LingBot-v1 source is absent}"
+    : "${LINGBOT_CODE_SHA256:?Set LINGBOT_CODE_SHA256 when synchronized LingBot-v1 source is absent}"
+    download_and_extract "${LINGBOT_CODE_GDOWN_URL}" "${LINGBOT_CODE_SHA256}" \
+        "${WORK_ROOT}/downloads/lingbot-vla.zip" "${WORK_ROOT}/lingbot_extract" \
+        "${LINGBOT_ROOT}/lingbotvla/models/auto.py"
+fi
 if [[ ! -e "${LINGBOT_ROOT}/lingbotvla/models/auto.py" ]]; then
     lingbot_marker="$(find "${WORK_ROOT}/lingbot_extract" -type f -path '*/lingbotvla/models/auto.py' -print -quit)"
     [[ -n "${lingbot_marker}" ]] || { echo "LingBot archive lacks lingbotvla/models/auto.py" >&2; exit 4; }

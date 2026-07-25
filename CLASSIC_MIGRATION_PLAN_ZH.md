@@ -278,5 +278,18 @@ G 阶段验收：
   `FeatureTransform`/server API 并通过 checkpoint 实机 smoke 前，
   LingBot-v1 部署链路不可标记为可用。
 
+后续进展：
+
+- `15ce694` 已把 LingBot-v1 adapter 迁移到当前
+  `deploy.lingbot_vla_policy` / `FeatureTransform` API，并对 v1/v2
+  分别固定 robot config；训练 dry-run、映射测试和 adapter 回归通过。
+  完整权重加载与 ROS 真机 smoke 仍需 CUDA 宿主机验证。
+- 已实现统一 VastAI 调度工作包（待提交）：支持按 `dp`、`act`、
+  `openpi`、`lingbot-v1`、`lingbot-v2` 选择后端，分离同步源码与
+  `0600` 私有环境文件，列出并下载后端所需权重，注入 HF/W&B/
+  ServerChan/Vast 凭据，上传模型并按成功/失败策略停止实例。五种后端
+  dry-run、密钥脱敏、SSH/SCP 参数和 LingBot-v2 资产路径共 10 项新测试
+  通过；尚未连接真实 Vast 实例，云端 Gate 保持“部分通过”。
+
 因此当前分支适合作为可复现的继续集成基线，但还不是最终训练/部署
 交付版本。
