@@ -282,27 +282,31 @@ G 阶段验收：
   `deploy` Python package 冲突。协议本地回环和无模型 worker fixture
   已通过；真实 checkpoint、CUDA、ROS topic 和动作执行仍需在对应
   宿主机完成 smoke，因此部署 Gate H 当前为“部分通过”。
-- I 阶段容器交付骨架已完成：OpenPI 使用固定子模块的 `uv.lock` 构建
-  自包含 JAX worker 镜像；LingBot-v1/v2 使用互相隔离的 conda-pack
+- I 阶段容器交付骨架已完成：OpenPI 使用固定子模块的 `uv.lock`，在
+  Classic ROS Noetic/Ubuntu 20.04 基础镜像内增加独立 Python 3.11/JAX
+  Server 环境和 localhost ROS Client，形成单一 ROS-capable 交付镜像；
+  LingBot-v1/v2 使用互相隔离的 conda-pack
   named context，v2 明确要求 Python 3.12/PyTorch 2.8；ACT/DP 复用
   classic 镜像。统一 runner 只读挂载权重并从运行时 env 文件读取协议
   密钥，不再删除已有镜像/容器。LingBot-v1 镜像中原先持久化的诊断
   密钥和写死 ROS 地址已移除。20 项脚本测试、shell 语法和三个
   Dockerfile 的 `buildx --check` 均通过。Classic 和 LingBot-v1
-  环境归档已经生成并通过 SHA-256 校验；LingBot-v2 必须在
-  Ubuntu 22.04/glibc 2.35 的 GPU builder 上生成。尚未执行完整镜像
-  build/import；容器内 CUDA checkpoint 推理和宿主机 ROS 消息闭环
-  仍待手工验收，Gate I 为“部分通过”。
-- J 阶段自动验收已执行：OpenPI `8e9c6c` 可导入，JAX 当前识别到 CPU；
+  环境归档已经生成并通过 SHA-256 校验；对应镜像已完整构建并在容器内
+  识别 RTX 3090。OpenPI 单镜像也已完整构建为 Ubuntu 20.04.6/ROS
+  Noetic，Classic Python 3.10/Torch CUDA 与 OpenPI Python 3.11/JAX
+  CUDA 均通过 import/GPU smoke。LingBot-v2 必须在 Ubuntu
+  22.04/glibc 2.35 的 GPU builder 上生成。真实 checkpoint 推理和
+  ROS 消息闭环仍待手工验收，Gate I 为“部分通过”。
+- J 阶段自动验收已执行：OpenPI `8e9c6c` 可导入；单镜像内 JAX 已识别
+  `cuda:0`，Classic Torch 已识别 RTX 3090；
   Task1 本地 LeRobot 数据可读（200 episodes、43,924 frames、10 Hz）；
   协议 14 项测试全部通过；其余测试 60 项通过。LingBot-v2 唯一的 pytest
   导入项因通用 `kdc_dev` 不包含 v2 的 `torchdata` 而不适用，在隔离
   `kdc_vla` 环境直接执行同一 `FeatureTransform` slot 映射检查已通过。
-  Codex 执行隔离层内的 `nvidia-smi` 不可见 GPU；用户已确认宿主机驱动
-  575.57.08、CUDA 12.9 正常，因此这不是宿主机阻塞，但真实 checkpoint
-  和 ROS 动作仍需从可见 GPU 的宿主终端验收。最终硬件门禁和安全执行
-  顺序已写入 `docs/delivery_validation_zh.md`，Gate J 为“等待
-  GPU/操作者验收”。
+  用户已确认宿主机驱动 575.57.08、CUDA 12.9 正常，容器 GPU passthrough
+  也已验证；真实 checkpoint 和 ROS 动作仍需操作者验收。最终硬件门禁
+  和安全执行顺序已写入 `docs/delivery_validation_zh.md`，Gate J 为
+  “等待 checkpoint/操作者验收”。
 - 三个最终数据集路径已确认并读取元数据：Task1 repaired 345（81,142
   frames）、Task2 repaired 264（50,042 frames，双腕相机）、Task3
   repaired 165（26,987 frames），均为 10 Hz。Docker 环境盘点确认

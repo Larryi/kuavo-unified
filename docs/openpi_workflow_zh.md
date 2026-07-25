@@ -89,10 +89,13 @@ scripts/kuavo_openpi viewer
 检查点的 `assets/` 回退加载。Open-loop 输出是无 ROS 的动作诊断，不替代
 宿主机 ROS 消息、动作执行频率和真机安全验收。
 
-## ROS 侧隔离调用
+## 单镜像内的 ROS 隔离调用
 
-OpenPI server 与 ROS client 不需要共享 Python 环境。ROS 侧使用
+OpenPI server 与 ROS client 不共享 Python 环境，但最终部署在同一个
+ROS Noetic/Ubuntu 20.04 镜像内。OpenPI 使用独立 Python 3.11/JAX uv
+环境，ROS Client 使用 Classic Python 3.10 环境。ROS 侧使用
 `configs/deploy/kuavo_env.openpi_client.yaml` 和
 `requirements_policy_client.txt`，通过兼容 OpenPI 的 msgpack WebSocket
-协议取得动作块。配置、reset/health/metadata 语义和安全默认值见
-`docs/policy_protocol_zh.md`。
+协议在 `127.0.0.1:8000` 取得动作块。容器通过 host network 访问宿主机
+ROS master 和真机 topic。配置、reset/health/metadata 语义和安全默认值
+见 `docs/policy_protocol_zh.md`。

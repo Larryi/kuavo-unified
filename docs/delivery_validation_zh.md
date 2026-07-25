@@ -96,6 +96,18 @@ LingBot-v2；DP/ACT 可复用同一 client YAML。每次只启动一个 worker�
 完整镜像 build 后先执行容器内 import、`nvidia-smi` 和单样本 open-loop，
 再连接宿主机 ROS。VastAI 流程先执行：
 
+当前已完成的无权重容器门禁：
+
+- `kuavo-classic:latest`：Ubuntu 20.04/ROS Noetic，Torch
+  2.7.1+cu126 识别 RTX 3090；
+- `kdc_real_task1_lingbot:latest`：flash-attn 2.7.0.post2 和
+  LingBot-v1 adapter 导入通过，Torch 识别 RTX 3090；
+- `kuavo-openpi:latest`：单一 Ubuntu 20.04.6/ROS Noetic 镜像，
+  Classic Python 3.10 ROS Client 与 OpenPI Python 3.11/JAX Server
+  同时导入通过，JAX 识别 `cuda:0`。
+
+上述结果不替代真实 checkpoint、单样本 open-loop 和 ROS 动作验收。
+
 ```bash
 MODEL_BACKEND=openpi DRY_RUN=1 scripts/vast/launch.sh
 MODEL_BACKEND=lingbot-v1 DRY_RUN=1 scripts/vast/launch.sh

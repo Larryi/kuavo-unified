@@ -58,7 +58,7 @@ one environment and reuse it for every backend.
 | Classic ACT / DP | `kdc_dev` | Python 3.10, PyTorch 2.7.1 + CUDA 12.6 |
 | LingBot-VLA v1 | `kdc_vla` | Python 3.10, PyTorch 2.7.1 + CUDA 12.6, flash-attn |
 | LingBot-VLA v2 | `lingbotvla_v2` | Python 3.12, PyTorch 2.8.0, flash-attn 2.8.3 |
-| OpenPI | no archive | Built from the pinned `uv.lock` |
+| OpenPI | reuses Classic archive/base | ROS Noetic/Python 3.10 client + isolated Python 3.11/JAX server |
 
 Install `conda-pack` once:
 
@@ -182,10 +182,20 @@ LINGBOT_ENV_ARCHIVE=/mnt/pqssd/docker_envs/lingbot-v1/myenv.tar.gz \
 LINGBOT_V2_ENV_ARCHIVE=/mnt/pqssd/docker_envs/lingbot-v2/myenv.tar.gz \
   docker/build_lingbot_v2.sh
 
+# OpenPI is a single ROS-capable image layered on the validated Classic image.
 docker/build_openpi.sh
 ```
 
 Add `DRY_RUN=1` to any command to inspect it without building.
+
+OpenPI is not delivered as an Ubuntu 22.04-only worker. `docker/build_openpi.sh`
+requires the already-built `kuavo-classic:latest`, imports the pinned OpenPI
+submodule through a separate BuildKit context, and creates
+`kuavo-openpi:latest`. The final image contains ROS Noetic, the Kuavo ROS
+Client, the Classic environment and a separate OpenPI Python 3.11/JAX
+environment. Server and ROS Client communicate over localhost in the same
+container; `--network host` exposes the container to the host ROS master and
+robot topics.
 
 ⚠️ Important:
 - Checkpoints, pretrained weights, datasets and credentials must not enter the

@@ -32,7 +32,7 @@ def test_packed_environment_builders_have_offline_dry_run(script: str, context: 
     assert "--secret" not in result.stdout
 
 
-def test_openpi_builder_uses_pinned_submodule_dockerfile() -> None:
+def test_openpi_builder_uses_classic_base_and_pinned_source_context() -> None:
     result = subprocess.run(
         [str(ROOT / "docker/build_openpi.sh")],
         cwd=ROOT,
@@ -43,7 +43,26 @@ def test_openpi_builder_uses_pinned_submodule_dockerfile() -> None:
     )
     assert result.returncode == 0, result.stderr
     assert "Dockerfile.openpi" in result.stdout
+    assert "CLASSIC_BASE_IMAGE=kuavo-classic:latest" in result.stdout
+    assert "openpi_src=" in result.stdout
     assert str(ROOT) in result.stdout
+
+
+def test_openpi_image_uses_bfsu_for_uv_packages() -> None:
+    dockerfile = (ROOT / "Dockerfile.openpi").read_text(encoding="utf-8")
+    assert "UV_DEFAULT_INDEX=https://mirrors.bfsu.edu.cn/pypi/web/simple" in dockerfile
+    assert "conda create -p /opt/openpi-python" in dockerfile
+    assert "mirrors.bfsu.edu.cn/anaconda/cloud/conda-forge" in dockerfile
+    assert "python=3.11.9 pip -y" in dockerfile
+    assert "uv venv --python /opt/openpi-python/bin/python" in dockerfile
+
+
+def test_openpi_delivery_image_contains_ros_and_is_not_ubuntu_2204_worker() -> None:
+    dockerfile = (ROOT / "Dockerfile.openpi").read_text(encoding="utf-8")
+    assert "FROM ${CLASSIC_BASE_IMAGE}" in dockerfile
+    assert "import rospy" in dockerfile
+    assert "PolicyClient" in dockerfile
+    assert "ubuntu22.04" not in dockerfile
 
 
 @pytest.mark.parametrize(
@@ -87,6 +106,31 @@ def test_openpi_runner_requires_server_args_without_calling_docker() -> None:
     )
     assert result.returncode == 2
     assert "SERVER_ARGS" in result.stderr
+
+
+def test_openpi_runner_uses_single_ros_capable_image_entrypoint() -> None:
+    result = subprocess.run(
+        [str(ROOT / "docker/run_policy_worker.sh")],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "BACKEND": "openpi",
+            "SERVER_ARGS": "policy:checkpoint --policy.config=pi05_kuavo",
+            "DRY_RUN": "1",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "kuavo-openpi:latest" in result.stdout
+    assert "start_openpi_ros.sh" in result.stdout
+
+
+def test_openpi_stack_launcher_does_not_eval_server_arguments() -> None:
+    launcher = (ROOT / "docker/start_openpi_ros.sh").read_text(encoding="utf-8")
+    assert "shlex.split" in launcher
+    assert 'bash -lc "exec scripts/kuavo_openpi' not in launcher
 
 
 def test_lingbot_image_does_not_persist_credentials_or_ros_addresses() -> None:

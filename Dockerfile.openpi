@@ -1,34 +1,69 @@
 # syntax=docker/dockerfile:1.7
 
-FROM nvidia/cuda:12.2.2-cudnn8-runtime-ubuntu22.04@sha256:2d913b09e6be8387e1a10976933642c73c840c0b735f0bf3c28d97fc9bc422e0
+# One ROS-capable delivery image: Classic supplies Ubuntu 20.04, ROS Noetic,
+# Kuavo deployment code and Python 3.10; OpenPI keeps an isolated Python 3.11
+# uv/JAX environment inside the same final image.
+ARG CLASSIC_BASE_IMAGE=kuavo-classic:latest
+FROM ${CLASSIC_BASE_IMAGE}
+
 COPY --from=ghcr.io/astral-sh/uv:0.5.1 /uv /uvx /bin/
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+ARG DEBIAN_FRONTEND=noninteractive
+ARG UBUNTU_MIRROR=https://mirrors.bfsu.edu.cn/ubuntu
+ARG PIP_INDEX_URL=https://mirrors.bfsu.edu.cn/pypi/web/simple
+
+ENV UV_LINK_MODE=copy \
+    UV_HTTP_RETRIES=5 \
+    UV_HTTP_TIMEOUT=600 \
+    UV_PROJECT_ENVIRONMENT=/root/kuavo_data_challenge/third_party/openpi-kuavo/.venv \
+    UV_DEFAULT_INDEX=https://mirrors.bfsu.edu.cn/pypi/web/simple \
+    OPENPI_DATA_HOME=/openpi_assets \
+    OPENPI_PYTHON=/root/kuavo_data_challenge/third_party/openpi-kuavo/.venv/bin/python \
+    OPENPI_ROOT=/root/kuavo_data_challenge/third_party/openpi-kuavo \
+    IS_DOCKER=true
+
+RUN sed -i "s|http://archive.ubuntu.com/ubuntu|${UBUNTU_MIRROR}|g" /etc/apt/sources.list && \
+    sed -i "s|http://security.ubuntu.com/ubuntu|${UBUNTU_MIRROR}|g" /etc/apt/sources.list && \
+    rm -f /etc/apt/apt.conf.d/docker-clean && \
+    apt-get update && apt-get install -y --no-install-recommends \
         build-essential clang git git-lfs linux-headers-generic && \
     rm -rf /var/lib/apt/lists/*
 
-ENV UV_LINK_MODE=copy \
-    UV_PROJECT_ENVIRONMENT=/.venv \
-    OPENPI_DATA_HOME=/openpi_assets \
-    IS_DOCKER=true
+# Supply the pinned OpenPI submodule through a dedicated named context.
+WORKDIR /root/kuavo_data_challenge/third_party/openpi-kuavo
+COPY --from=openpi_src / /root/kuavo_data_challenge/third_party/openpi-kuavo/
 
-RUN uv venv --python 3.11.9 "${UV_PROJECT_ENVIRONMENT}"
+RUN conda create -p /opt/openpi-python \
+        --override-channels \
+        -c https://mirrors.bfsu.edu.cn/anaconda/cloud/conda-forge \
+        -c https://mirrors.bfsu.edu.cn/anaconda/pkgs/main \
+        python=3.11.9 pip -y && \
+    uv venv --python /opt/openpi-python/bin/python "${UV_PROJECT_ENVIRONMENT}"
 
-COPY third_party/openpi-kuavo/uv.lock third_party/openpi-kuavo/pyproject.toml ./
-COPY third_party/openpi-kuavo/packages/openpi-client/pyproject.toml packages/openpi-client/pyproject.toml
-COPY third_party/openpi-kuavo/packages/openpi-client/src packages/openpi-client/src
-RUN --mount=type=cache,target=/root/.cache/uv \
-    GIT_LFS_SKIP_SMUDGE=1 uv sync --frozen --no-install-project --no-dev
-
-COPY third_party/openpi-kuavo/ ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     GIT_LFS_SKIP_SMUDGE=1 uv sync --frozen --no-dev && \
-    /.venv/bin/python -c "import transformers; print(transformers.__file__)" | \
+    "${OPENPI_PYTHON}" -c "import transformers; print(transformers.__file__)" | \
         xargs dirname | \
         xargs -I{} cp -r src/openpi/models_pytorch/transformers_replace/. {}
 
-ENTRYPOINT ["/bin/bash", "-c"]
-CMD ["exec uv run scripts/serve_policy.py $SERVER_ARGS"]
+# Refresh deployment code from this commit after the expensive OpenPI layer.
+# The global .dockerignore excludes OpenPI, so it does not overwrite the pinned
+# named context or invalidate the uv environment when unified code changes.
+WORKDIR /root/kuavo_data_challenge
+COPY . .
+
+# The ROS client uses Classic's environment and calls the localhost OpenPI
+# server. Both runtimes are present in this one final image.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    source /opt/ros/noetic/setup.bash && \
+    source ./myenv/bin/activate && \
+    python -m pip install -r requirements_policy_client.txt \
+        --index-url "${PIP_INDEX_URL}" \
+        --root-user-action=ignore && \
+    python -c "import rospy, msgpack, websockets; from kuavo_deploy.kuavo_service.client import PolicyClient; print('OpenPI ROS client imports: OK')" && \
+    "${OPENPI_PYTHON}" -c "import jax, openpi; print('OpenPI/JAX imports: OK', jax.devices())" && \
+    chmod +x docker/start_openpi_ros.sh
+
+CMD ["bash"]

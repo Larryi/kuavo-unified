@@ -18,7 +18,7 @@ case "${BACKEND}" in
         IMAGE_NAME="${IMAGE_NAME:-kuavo-classic:latest}"
         ;;
     openpi)
-        IMAGE_NAME="${IMAGE_NAME:-kuavo-openpi-worker:latest}"
+        IMAGE_NAME="${IMAGE_NAME:-kuavo-openpi:latest}"
         ;;
     lingbot)
         IMAGE_NAME="${IMAGE_NAME:-kdc_real_task1_lingbot:latest}"
@@ -89,8 +89,10 @@ if [[ "${BACKEND}" == "openpi" ]]; then
     fi
     docker_args+=(
         -e "SERVER_ARGS=${SERVER_ARGS}"
+        -e "OPENPI_PORT=${HOST_PORT}"
         -e OPENPI_DATA_HOME=/models
         -e IS_DOCKER=true
+        --entrypoint /root/kuavo_data_challenge/docker/start_openpi_ros.sh
         "${IMAGE_NAME}"
     )
 else
