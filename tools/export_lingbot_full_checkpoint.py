@@ -25,6 +25,8 @@ def main() -> None:
     parser.add_argument("--lingbot-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--save-dtype", choices=("bfloat16", "float32"), default="bfloat16")
+    parser.add_argument("--lora-rank", type=int)
+    parser.add_argument("--lora-alpha", type=float)
     parser.add_argument("--force", action="store_true")
     parser.add_argument(
         "--dry-run",
@@ -46,8 +48,6 @@ def main() -> None:
 
     run_dir = find_run_dir(checkpoint)
     config = yaml.safe_load((run_dir / "lingbotvla_cli.yaml").read_text(encoding="utf-8"))
-    if config.get("train", {}).get("use_lora", False):
-        raise ValueError("This exporter is for full fine-tuning checkpoints, not LoRA checkpoints")
     ckpt_manager = str(config.get("train", {}).get("ckpt_manager", "dcp"))
     assets_dir = run_dir / "model_assets"
     if not assets_dir.is_dir():
@@ -68,6 +68,29 @@ def main() -> None:
     from lingbotvla.models.module_utils import save_model_weights
 
     state_dict = ckpt_to_state_dict(checkpoint, run_dir, ckpt_manager=ckpt_manager)
+    has_lora = any(".lora_" in key or ".base_layer." in key for key in state_dict)
+    if has_lora:
+        if args.lora_rank is None or args.lora_alpha is None:
+            raise ValueError(
+                "Checkpoint contains PEFT LoRA tensors. Pass the exact training "
+                "--lora-rank and --lora-alpha before exporting."
+            )
+        from kuavo_train.lingbot_v2.lora import merge_lora_state_dict
+
+        state_dict = merge_lora_state_dict(
+            state_dict,
+            alpha=args.lora_alpha,
+            rank=args.lora_rank,
+        )
+        leftovers = [
+            key for key in state_dict if ".lora_" in key or ".base_layer." in key
+        ]
+        if leftovers:
+            raise RuntimeError(f"LoRA merge left nonportable key: {leftovers[0]}")
+        print(
+            f"Merged LingBot-v2 LoRA weights "
+            f"(rank={args.lora_rank}, alpha={args.lora_alpha:g})"
+        )
     output.mkdir(parents=True)
     for source in assets_dir.iterdir():
         destination = output / source.name
@@ -75,6 +98,7 @@ def main() -> None:
             shutil.copytree(source, destination)
         else:
             shutil.copy2(source, destination)
+    shutil.copy2(run_dir / "lingbotvla_cli.yaml", output / "lingbotvla_cli.yaml")
     save_model_weights(output, state_dict, save_dtype=args.save_dtype)
 
     config_file = output / "config.json"
@@ -85,6 +109,13 @@ def main() -> None:
     missing = sorted({name for name in index["weight_map"].values() if not (output / name).is_file()})
     if missing:
         raise RuntimeError(f"Export is missing safetensor shards: {missing}")
+    leftover_keys = [
+        key
+        for key in index["weight_map"]
+        if ".lora_" in key or ".base_layer." in key
+    ]
+    if leftover_keys:
+        raise RuntimeError(f"Export still contains PEFT key: {leftover_keys[0]}")
     print(f"Full LingBot HF checkpoint exported and verified: {output}")
 
 
