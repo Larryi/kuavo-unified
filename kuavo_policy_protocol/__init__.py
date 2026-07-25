@@ -7,6 +7,7 @@ from .schema import (
     validate_action_response,
     validate_observation,
 )
+from .server import WebSocketPolicyServer
 
 __all__ = [
     "ObservationSchema",
@@ -14,6 +15,7 @@ __all__ = [
     "PolicyMetadata",
     "PolicyTimeoutError",
     "WebSocketPolicyClient",
+    "WebSocketPolicyServer",
     "validate_action_response",
     "validate_observation",
 ]

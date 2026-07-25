@@ -94,7 +94,8 @@ class WebSocketPolicyClient:
             self._connect()
 
     def health(self) -> bool:
-        request = urllib.request.Request(self._health_url, method="GET")
+        headers = {"Authorization": f"Api-Key {self._api_key}"} if self._api_key else {}
+        request = urllib.request.Request(self._health_url, headers=headers, method="GET")
         try:
             with urllib.request.urlopen(request, timeout=self._request_timeout_s) as response:
                 return response.status == 200 and response.read().strip() == b"OK"

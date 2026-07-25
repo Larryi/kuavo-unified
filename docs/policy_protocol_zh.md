@@ -90,3 +90,27 @@ worker。模型权重、HF/W&B/ServerChan token 和 ROS 网络参数均应在运
 完整 JAX checkpoint server、ROS topic 和真机动作仍需在 CUDA/ROS 宿主机
 手工验收。该验收前保持 `client_execute_steps=1`，确认动作语义和频率后再
 增加执行步数。
+
+## ACT / DP / LingBot 隔离 worker
+
+在对应模型环境安装轻量协议依赖，然后启动 worker：
+
+```bash
+python -m pip install -r requirements_policy_client.txt
+
+python tools/policy_worker.py \
+  --backend act \
+  --policy-path /models/act/epochlast \
+  --host 0.0.0.0 \
+  --port 8000
+```
+
+把 `--backend` 改为 `diffusion`、`lingbot` 或 `lingbot_v2` 即可复用同一
+server。LingBot 还应传入其隔离环境中的 `--lingbot-root`、`--qwen-path`、
+`--robot-name` 和 `--norm-stats-file`。worker 在每个新连接建立时 reset
+模型，只允许一个推理请求进入模型临界区，并提供与 OpenPI 相同的 metadata
+首帧、二进制 infer 帧和 `/healthz`。
+
+需要鉴权时，在 worker 和 ROS client 两边设置同一个
+`KUAVO_POLICY_API_KEY`。密钥仅从环境读取，健康检查和 WebSocket 握手都会
+发送 `Authorization: Api-Key ...`，不会写入 YAML。

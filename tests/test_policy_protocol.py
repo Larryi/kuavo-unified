@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 import http
+import multiprocessing
+from pathlib import Path
+import socket
+import subprocess
+import sys
 import threading
 import urllib.error
 
@@ -14,6 +19,7 @@ from kuavo_policy_protocol.client import (
     PolicyTimeoutError,
     WebSocketPolicyClient,
 )
+from kuavo_policy_protocol.server import WebSocketPolicyServer
 from kuavo_policy_protocol.schema import (
     ObservationSchema,
     PolicyMetadata,
@@ -212,6 +218,37 @@ def test_websocket_client_health_uses_openpi_healthz(monkeypatch) -> None:
     assert not client.health()
 
 
+def test_websocket_client_health_passes_api_key_header(monkeypatch) -> None:
+    socket = FakeWebSocket()
+    monkeypatch.setattr("websockets.sync.client.connect", lambda *_args, **_kwargs: socket)
+
+    class Response:
+        status = 200
+
+        def read(self):
+            return b"OK\n"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    def urlopen(request, timeout):
+        del timeout
+        assert request.headers["Authorization"] == "Api-Key private"
+        return Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    client = WebSocketPolicyClient(
+        api_key="private",
+        connect_timeout_s=0.1,
+        request_timeout_s=0.1,
+        retry_interval_s=0.001,
+    )
+    assert client.health()
+
+
 def test_ros_policy_client_consumes_action_chunk(monkeypatch) -> None:
     class FakeProtocolClient:
         def __init__(self, **kwargs):
@@ -332,3 +369,114 @@ def test_real_websocket_server_openpi_flow() -> None:
     finally:
         server.shutdown()
         thread.join(timeout=2)
+
+
+class ProcessFakePolicy:
+    def reset(self):
+        pass
+
+    def infer(self, observation):
+        action_dim = len(np.asarray(observation["observation.state"]))
+        return {"actions": np.ones((2, action_dim), dtype=np.float32)}
+
+
+def _run_kuavo_server(port: int) -> None:
+    WebSocketPolicyServer(
+        ProcessFakePolicy(),
+        host="127.0.0.1",
+        port=port,
+        metadata={
+            "backend": "fake",
+            "action_dim": 8,
+            "action_horizon": 2,
+        },
+    ).serve_forever()
+
+
+def test_kuavo_worker_server_is_openpi_client_compatible() -> None:
+    try:
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+    except PermissionError:
+        pytest.skip("Local socket creation is disabled in this sandbox")
+    process = multiprocessing.get_context("fork").Process(
+        target=_run_kuavo_server,
+        args=(port,),
+        daemon=True,
+    )
+    process.start()
+    try:
+        client = WebSocketPolicyClient(
+            "127.0.0.1",
+            port,
+            connect_timeout_s=2,
+            request_timeout_s=1,
+            retry_interval_s=0.01,
+        )
+        assert client.health()
+        assert client.metadata.backend == "fake"
+        actions = validate_action_response(client.infer(valid_observation()), action_dim=8)
+        assert actions.shape == (2, 8)
+        client.close()
+    finally:
+        process.terminate()
+        process.join(timeout=2)
+
+
+def test_worker_server_api_key_comparison() -> None:
+    server = WebSocketPolicyServer(ProcessFakePolicy(), api_key="private")
+    assert server._authorized("Api-Key private")
+    assert not server._authorized("Api-Key wrong")
+    assert not server._authorized(None)
+
+
+def test_policy_worker_cli_runs_directly_from_tools_directory() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [sys.executable, str(repo_root / "tools/policy_worker.py"), "--help"],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--backend" in result.stdout
+
+
+def test_local_worker_normalizes_chunk_shape_and_metadata() -> None:
+    import torch
+
+    from kuavo_deploy.kuavo_service.policy_worker import LocalPolicyWorker
+
+    class Policy:
+        config = SimpleNamespace(
+            output_features={"action": SimpleNamespace(shape=(8,))},
+            input_features={
+                "observation.images.head_cam_h": object(),
+                "observation.state": object(),
+            },
+            chunk_size=3,
+        )
+        resets = 0
+
+        def reset(self):
+            self.resets += 1
+
+        def predict_action_chunk(self, observation):
+            assert "prompt" not in observation
+            return torch.ones((1, 3, 8), dtype=torch.float32)
+
+    policy = Policy()
+    worker = LocalPolicyWorker(
+        backend="act",
+        policy=policy,
+        preprocessor=lambda value: value,
+        postprocessor=lambda value: value,
+    )
+    response = worker.infer(valid_observation())
+    assert response["actions"].shape == (3, 8)
+    assert worker.metadata["action_dim"] == 8
+    assert worker.metadata["action_horizon"] == 3
+    worker.reset()
+    assert policy.resets == 1

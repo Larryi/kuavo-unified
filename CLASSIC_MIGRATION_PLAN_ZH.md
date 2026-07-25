@@ -271,12 +271,14 @@ G 阶段验收：
   API 与旧 trainer 的不兼容，四卡配置解析、checkpoint 完整性清理
   fixture 和 exporter dry-run 已通过。尚未在 CUDA 云实例执行真实
   norm 计算、FSDP2 训练、导出和上传，Gate G 为“部分通过”。
-- 另有一项已确认的部署阻塞：固定 LingBot-v1 已将服务入口更新为
-  `deploy.lingbot_vla_policy`，而 unified 的
-  `kuavo_deploy/utils/lingbot_adapter.py` 仍引用已不存在的
-  `deploy.lingbot_robotwin_policy`。在 adapter 迁移到新
-  `FeatureTransform`/server API 并通过 checkpoint 实机 smoke 前，
-  LingBot-v1 部署链路不可标记为可用。
+- H 阶段协议与 worker 基础已完成：ROS client 已切换为与 OpenPI
+  兼容的 MessagePack WebSocket 协议；OpenPI、ACT、DP、LingBot-v1/v2
+  均可通过隔离进程暴露统一 metadata、推理帧和健康检查。LingBot-v1
+  adapter 已迁移到当前 `deploy.lingbot_vla_policy`、
+  `FeatureTransform`/server API，LingBot-v2 使用独立进程规避同名
+  `deploy` Python package 冲突。协议本地回环和无模型 worker fixture
+  已通过；真实 checkpoint、CUDA、ROS topic 和动作执行仍需在对应
+  宿主机完成 smoke，因此部署 Gate H 当前为“部分通过”。
 
 后续进展：
 
