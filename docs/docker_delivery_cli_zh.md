@@ -36,6 +36,10 @@ scripts/kuavo_docker build \
   --env-archive /mnt/pqssd/docker_envs/classic/myenv.tar.gz
 ```
 
+构建脚本会校验并预置官方 `resnet18-f37072fd.pth` 到镜像的 Torch cache，
+避免 ACT 首次推理在线下载。默认复用宿主机 Torch cache；若文件不存在，
+构建阶段会断点重试下载。可用 `RESNET18_CHECKPOINT` 指定已有权重文件。
+
 LingBot-v1：
 
 ```bash

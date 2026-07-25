@@ -52,6 +52,7 @@ from geometry_msgs.msg import PoseStamped
 from kuavo_deploy.config import KuavoConfig
 from kuavo_deploy.utils.diagnostics import DiagnosticsManager
 from kuavo_deploy.utils.logging_utils import setup_logger
+from kuavo_deploy.utils.policy_loader import resolve_processor_root
 from kuavo_deploy.kuavo_service.client import PolicyClient
 from lerobot.policies.factory import make_pre_post_processors
 log_model = setup_logger("model")
@@ -128,10 +129,21 @@ def resolve_pretrained_path(cfg) -> Path:
     return Path(f"outputs/train/{cfg.task}/{cfg.method}/{cfg.timestamp}/epoch{cfg.epoch}")
 
 
-def build_pre_post_processors(pretrained_path: Path, policy_type: str):
+def build_pre_post_processors(
+    pretrained_path: Path,
+    policy_type: str,
+    device: torch.device,
+):
     if policy_type in {"client", "lingbot", "lingbot_v2"}:
         return (lambda obs: obs), (lambda act: act)
-    return make_pre_post_processors(None, Path(str(pretrained_path).split("/epoch", 1)[0]))
+    processor_root = resolve_processor_root(pretrained_path)
+    return make_pre_post_processors(
+        None,
+        processor_root,
+        preprocessor_overrides={
+            "device_processor": {"device": str(device)},
+        },
+    )
 
 
 def setup_policy(pretrained_path, policy_type, cfg, device=torch.device("cuda")):
@@ -478,7 +490,11 @@ def kuavo_eval_autotest(config: KuavoConfig):
     set_seed(seed)
     device = torch.device(cfg.device)
     policy = setup_policy(pretrained_path, policy_type, cfg, device)
-    preprocessor, postprocessor = build_pre_post_processors(pretrained_path, policy_type)
+    preprocessor, postprocessor = build_pre_post_processors(
+        pretrained_path,
+        policy_type,
+        device,
+    )
     
     # first reset
     reset_service = rospy.ServiceProxy('/simulator/reset', Trigger)

@@ -32,6 +32,26 @@ def test_packed_environment_builders_have_offline_dry_run(script: str, context: 
     assert "--secret" not in result.stdout
 
 
+def test_classic_image_preloads_official_resnet18_checkpoint() -> None:
+    result = subprocess.run(
+        [str(ROOT / "docker/build_classic.sh")],
+        cwd=ROOT,
+        env={**os.environ, "DRY_RUN": "1"},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "torch_checkpoints=/path/to/torch-checkpoint-context" in result.stdout
+
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert "COPY --from=torch_checkpoints /resnet18-f37072fd.pth" in dockerfile
+    assert (
+        "f37072fd47e89c5e827621c5baffa7500819f7896bbacec160b1a16c560e07ec"
+        in dockerfile
+    )
+
+
 def test_openpi_builder_uses_classic_base_and_pinned_source_context() -> None:
     result = subprocess.run(
         [str(ROOT / "docker/build_openpi.sh")],

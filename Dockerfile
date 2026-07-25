@@ -150,6 +150,16 @@ ENV LANG=C.UTF-8 \
 
 WORKDIR /root/kuavo_data_challenge
 
+# Torchvision's ACT backbone otherwise downloads this on first inference.
+# The build wrapper verifies the official checksum and supplies this binary
+# through an external BuildKit context, keeping it out of Git.
+RUN mkdir -p /root/.cache/torch/hub/checkpoints
+COPY --from=torch_checkpoints /resnet18-f37072fd.pth \
+    /root/.cache/torch/hub/checkpoints/resnet18-f37072fd.pth
+RUN echo \
+    "f37072fd47e89c5e827621c5baffa7500819f7896bbacec160b1a16c560e07ec  /root/.cache/torch/hub/checkpoints/resnet18-f37072fd.pth" \
+    | sha256sum --check -
+
 RUN sed -i "s|http://archive.ubuntu.com/ubuntu|${UBUNTU_MIRROR}|g" /etc/apt/sources.list && \
     sed -i "s|http://security.ubuntu.com/ubuntu|${UBUNTU_MIRROR}|g" /etc/apt/sources.list && \
     sed -i "s|http://ports.ubuntu.com/ubuntu-ports|${UBUNTU_MIRROR}-ports|g" /etc/apt/sources.list || true

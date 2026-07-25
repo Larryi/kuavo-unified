@@ -192,6 +192,12 @@ docker/build_openpi.sh
 
 Add `DRY_RUN=1` to any command to inspect it without building.
 
+The Classic build verifies and embeds the official
+`resnet18-f37072fd.pth` in Torch's checkpoint cache, so ACT inference does not
+download it at runtime. It reuses the host Torch cache by default, downloads
+with retries if absent, and accepts an existing file through
+`RESNET18_CHECKPOINT=/path/to/resnet18-f37072fd.pth`.
+
 OpenPI is not delivered as an Ubuntu 22.04-only worker. `docker/build_openpi.sh`
 requires the already-built `kuavo-classic:latest`, imports the pinned OpenPI
 submodule through a separate BuildKit context, and creates

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,21 @@ PROCESSOR_CONFIG_FILES = (
     "policy_preprocessor.json",
     "policy_postprocessor.json",
 )
+
+
+def _has_nonportable_processor_steps(processor_root: Path) -> bool:
+    """Reject training snapshots that serialized locally defined processor classes."""
+    for name in PROCESSOR_CONFIG_FILES:
+        config_path = processor_root / name
+        try:
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for step in config.get("steps", []):
+            class_name = step.get("class", "")
+            if class_name.startswith("__main__."):
+                return True
+    return False
 
 
 def resolve_policy_path(cfg: Any) -> Path:
@@ -40,9 +56,24 @@ def resolve_processor_root(pretrained_path: str | Path) -> Path:
     """Find the run directory that owns the saved pre/post processors."""
     policy_path = Path(pretrained_path).expanduser().resolve()
     candidates = (policy_path, *policy_path.parents)
+    rejected: list[Path] = []
     for candidate in candidates:
         if all((candidate / name).is_file() for name in PROCESSOR_CONFIG_FILES):
+            if _has_nonportable_processor_steps(candidate):
+                rejected.append(candidate)
+                log_model.warning(
+                    "Skipping non-portable training processor snapshot: %s",
+                    candidate,
+                )
+                continue
             return candidate
+    if rejected:
+        rejected_text = ", ".join(str(path) for path in rejected)
+        raise FileNotFoundError(
+            "Only non-portable training processor snapshots were found at or above "
+            f"checkpoint {policy_path}: {rejected_text}. "
+            "Use the run bundle containing the inference-safe root processors."
+        )
     raise FileNotFoundError(
         f"Could not find {PROCESSOR_CONFIG_FILES} at or above checkpoint {policy_path}"
     )
