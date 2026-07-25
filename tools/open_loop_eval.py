@@ -27,6 +27,7 @@ from tqdm import tqdm
 
 import lerobot_patches.custom_patches  # noqa: F401
 from kuavo_deploy.utils.policy_loader import load_policy_and_processors
+from kuavo_deploy.utils.openpi_remote_adapter import load_openpi_remote_policy
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 
 
@@ -46,10 +47,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repo-id", default="kuavo/task1_sz")
     parser.add_argument(
         "--policy-type",
-        choices=["act", "diffusion", "lingbot", "lingbot_v2"],
+        choices=["act", "diffusion", "lingbot", "lingbot_v2", "openpi"],
         default="act",
     )
-    parser.add_argument("--policy-path", type=Path, required=True)
+    parser.add_argument("--policy-path", type=Path)
+    parser.add_argument("--policy-endpoint", default="127.0.0.1:8000")
+    parser.add_argument("--state-dim", type=int, default=8)
+    parser.add_argument("--action-dim", type=int, default=8)
     parser.add_argument("--task-description", default=DEFAULT_TASK)
     parser.add_argument("--lingbot-root", default="")
     parser.add_argument("--qwen25-path", default="")
@@ -151,7 +155,8 @@ def build_open_loop_delta_timestamps(
 
 def predict_classic_chunk(policy, batch: dict, policy_type: str) -> torch.Tensor:
     """Return a BxHxD action chunk using each classic policy's rollout contract."""
-    policy.reset()
+    if policy_type != "openpi":
+        policy.reset()
     if policy_type == "act":
         return policy.predict_action_chunk(batch)
     if policy_type == "diffusion":
@@ -250,7 +255,9 @@ def maybe_write_plots(output_dir: Path, summary: dict) -> None:
 
 def main() -> None:
     args = parse_args()
-    policy_path = resolve_path(args.policy_path)
+    if args.policy_type != "openpi" and args.policy_path is None:
+        raise ValueError("--policy-path is required unless --policy-type=openpi")
+    policy_path = resolve_path(args.policy_path) if args.policy_path is not None else None
     output_dir = resolve_path(
         args.output_dir or Path(f"outputs/open_loop/r1/{args.policy_type}")
     )
@@ -283,9 +290,18 @@ def main() -> None:
             "norm_stats_file": args.norm_stats_file,
             "use_compile": args.use_compile,
         }
-    policy, preprocessor, postprocessor = load_policy_and_processors(
-        policy_path, args.policy_type, device, policy_kwargs=policy_kwargs
-    )
+    if args.policy_type == "openpi":
+        policy, preprocessor, postprocessor = load_openpi_remote_policy(
+            args.policy_endpoint,
+            task_prompt=args.task_description,
+            state_dim=args.state_dim,
+            action_dim=args.action_dim,
+            action_horizon=args.max_horizon,
+        )
+    else:
+        policy, preprocessor, postprocessor = load_policy_and_processors(
+            policy_path, args.policy_type, device, policy_kwargs=policy_kwargs
+        )
     ds_meta = LeRobotDatasetMetadata(args.repo_id, root=args.dataset_root)
     delta_timestamps = build_open_loop_delta_timestamps(
         policy,

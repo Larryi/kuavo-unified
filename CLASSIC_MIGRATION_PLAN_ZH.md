@@ -325,6 +325,11 @@ G 阶段验收：
 
 后续进展：
 
+- OpenPI 最终本地门禁已通过：真实 Pi0.5 checkpoint 在统一
+  Ubuntu 20.04/ROS Noetic 镜像内由 JAX CUDA Server 加载，ROS Mock
+  经 MessagePack WebSocket Client 完成推理闭环。统一
+  `open_loop_eval.py`/viewer 已通过隔离 Server 接入 OpenPI；Task1
+  episode 0 的 3 个样本、每个 50 步、8 维动作均为有限值。
 - `15ce694` 已把 LingBot-v1 adapter 迁移到当前
   `deploy.lingbot_vla_policy` / `FeatureTransform` API，并对 v1/v2
   分别固定 robot config；训练 dry-run、映射测试和 adapter 回归通过。

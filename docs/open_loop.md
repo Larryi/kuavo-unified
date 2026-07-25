@@ -16,7 +16,8 @@ streamlit run tools/open_loop_viewer.py
 - classic ACT；
 - classic Diffusion Policy；
 - LingBot-VLA v1；
-- LingBot-VLA v2。
+- LingBot-VLA v2；
+- OpenPI（通过隔离的 WebSocket Policy Server）。
 
 示例：
 
@@ -44,10 +45,20 @@ python tools/open_loop_eval.py \
   --norm-stats-file assets/norm_stats/kuavo_v2_right_arm_meanstd.json
 ```
 
-不同模型依赖不应被强行安装进同一个 Python 环境。当前工具仍可在对应模型
-环境内本地加载策略；建立 `kuavo_policy_protocol` 后，统一入口应优先通过
-隔离的 policy worker 调用 ACT、DP、LingBot 和 OpenPI。OpenPI 支持将在该
-协议建立后接入，而不是在此工具中直接导入 JAX。
+OpenPI 示例（先在 OpenPI 容器或隔离环境启动 Server）：
+
+```bash
+python tools/open_loop_eval.py \
+  --dataset-root /mnt/pqssd/Real_PQ_3.0/TASK1_SZ_Repaired/lerobot_task1_345 \
+  --repo-id kuavo/task1_sz \
+  --policy-type openpi \
+  --policy-endpoint 127.0.0.1:8000 \
+  --episodes 0 \
+  --max-frames-per-episode 3
+```
+
+Viewer 中选择 `openpi` 并填写 `host:port`。JAX 仍留在独立 Server 环境，
+viewer 只使用轻量 MessagePack WebSocket Client。
 
 SmolVLA、GR00T 和 EEF diffusion 不属于最终训练或交付范围，不再提供加载
 选项。

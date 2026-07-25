@@ -37,6 +37,7 @@ from kuavo_deploy.utils.gripper_latch import (
     parse_action_indices,
 )
 from kuavo_deploy.utils.policy_loader import load_policy_and_processors
+from kuavo_deploy.utils.openpi_remote_adapter import load_openpi_remote_policy
 import lerobot.datasets.lerobot_dataset as lerobot_dataset_module
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 
@@ -50,6 +51,7 @@ DEFAULT_LINGBOT_POLICY_PATH = (
     "checkpoints/global_step_8000/hf_ckpt"
 )
 DEFAULT_LINGBOT_V2_POLICY_PATH = ""
+DEFAULT_OPENPI_ENDPOINT = "127.0.0.1:8000"
 DEFAULT_LINGBOT_ROOT = "/home/larry/lingbot-vla"
 DEFAULT_QWEN25_PATH = "/home/larry/Qwen2.5_VL"
 DEFAULT_LINGBOT_V2_ROOT = "/home/larry/lingbot-vla-v2"
@@ -474,6 +476,11 @@ def load_model(
     use_compile: bool,
     task: str,
 ):
+    if policy_type == "openpi":
+        return load_openpi_remote_policy(
+            policy_path or DEFAULT_OPENPI_ENDPOINT,
+            task_prompt=task,
+        )
     device = torch.device(device_name if torch.cuda.is_available() or not device_name.startswith("cuda") else "cpu")
     policy_kwargs = None
     if policy_type == "lingbot":
@@ -762,16 +769,20 @@ def main() -> None:
         dataset_root = st.text_input("Dataset root", DEFAULT_DATASET_ROOT)
         repo_id = st.text_input("Repo ID", "kuavo/task1_sz")
         policy_type = st.selectbox(
-            "Policy type", ["act", "diffusion", "lingbot", "lingbot_v2"], index=0
+            "Policy type", ["act", "diffusion", "lingbot", "lingbot_v2", "openpi"], index=0
         )
         if policy_type == "lingbot":
             default_policy_path = DEFAULT_LINGBOT_POLICY_PATH
         elif policy_type == "lingbot_v2":
             default_policy_path = DEFAULT_LINGBOT_V2_POLICY_PATH
+        elif policy_type == "openpi":
+            default_policy_path = DEFAULT_OPENPI_ENDPOINT
         else:
             default_policy_path = DEFAULT_POLICY_PATH
         policy_path = st.text_input(
-            "Policy path", default_policy_path, key=f"policy_path_{policy_type}"
+            "Policy endpoint" if policy_type == "openpi" else "Policy path",
+            default_policy_path,
+            key=f"policy_path_{policy_type}",
         )
         task = st.text_area("Task", DEFAULT_TASK)
         device_options = ["cuda"] if policy_type in {"lingbot", "lingbot_v2"} else ["cuda", "cpu"]
