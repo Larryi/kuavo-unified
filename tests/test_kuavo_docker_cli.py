@@ -63,6 +63,23 @@ def test_lingbot_incremental_checkpoint_is_rejected(tmp_path: Path) -> None:
         validate_checkpoint(BACKENDS["lingbot-v1"], checkpoint)
 
 
+def test_classic_nonportable_epoch_processor_is_rejected(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "epochbest"
+    make_classic_checkpoint(checkpoint)
+    (checkpoint / "policy_preprocessor.json").write_text(
+        """
+        {
+          "steps": [
+            {"class": "__main__.AugmentationProcessorStep", "config": {}}
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+    with pytest.raises(UsageError, match="run 根目录"):
+        validate_checkpoint(BACKENDS["act"], checkpoint)
+
+
 def test_release_assets_with_private_key_are_rejected(tmp_path: Path) -> None:
     checkpoint = tmp_path / "checkpoint"
     checkpoint.mkdir()

@@ -7,6 +7,7 @@ import argparse
 import contextlib
 from dataclasses import dataclass
 from datetime import datetime
+import json
 import os
 from pathlib import Path
 import shlex
@@ -190,6 +191,22 @@ def validate_checkpoint(spec: BackendSpec, path: Path) -> list[str]:
                 + "；请把包含 processor 文件的训练目录作为 --checkpoint，"
                   "并用 --checkpoint-subpath 指向实际权重目录。"
             )
+        for item in files:
+            if item.parent != path or item.name not in processor_names:
+                continue
+            try:
+                processor_config = json.loads(item.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if any(
+                step.get("class", "").startswith("__main__.")
+                for step in processor_config.get("steps", [])
+            ):
+                raise UsageError(
+                    f"{item} 含不可移植的训练期 processor（__main__.*）。"
+                    "请把含干净 processor 的训练 run 根目录作为 --checkpoint，"
+                    "并用 --checkpoint-subpath 指向 epoch 权重目录。"
+                )
     elif spec.key == "openpi":
         if not any(item.name == "_METADATA" for item in files):
             warnings.append("未发现 Orbax _METADATA；请确认这是可部署的 OpenPI checkpoint。")
