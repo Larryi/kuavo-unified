@@ -129,6 +129,34 @@ def test_shell_dry_run_mounts_checkpoint_and_never_runs_auto_test(tmp_path: Path
     assert "script_auto_test.py" not in command_line
 
 
+def test_openpi_shell_prints_structured_server_arguments(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "openpi"
+    checkpoint.mkdir()
+    (checkpoint / "_METADATA").write_text("{}", encoding="utf-8")
+    tokenizer = tmp_path / "tokenizer.model"
+    tokenizer.write_text("tokenizer", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            str(ROOT / "scripts/kuavo_docker"),
+            "shell",
+            "--backend", "openpi",
+            "--checkpoint", str(checkpoint),
+            "--tokenizer", str(tokenizer),
+            "--openpi-config", "pi05_kuavo",
+            "--dry-run",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "OPENPI_POLICY_CONFIG=pi05_kuavo" in result.stdout
+    assert "OPENPI_POLICY_DIR=/models/checkpoint" in result.stdout
+    assert "SERVER_ARGS=" not in result.stdout
+
+
 def test_release_dry_run_builds_image_without_saving_tar(tmp_path: Path) -> None:
     checkpoint = tmp_path / "classic"
     make_classic_checkpoint(checkpoint)

@@ -383,11 +383,10 @@ def shell_command(args: argparse.Namespace, spec: BackendSpec) -> None:
     print("容器内人工推理命令:")
     if spec.key == "openpi":
         print(
-            "  export SERVER_ARGS='policy:checkpoint "
-            f"--policy.config={args.openpi_config} "
-            f"--policy.dir={policy_path} --port=8000'"
+            f"  OPENPI_POLICY_CONFIG={args.openpi_config} "
+            f"OPENPI_POLICY_DIR={policy_path} "
+            "docker/start_openpi_ros.sh bash"
         )
-        print("  docker/start_openpi_ros.sh bash")
     print(
         "  python kuavo_deploy/src/scripts/script_auto_test.py "
         "--task auto_test --config configs/deploy/kuavo_env.yaml"

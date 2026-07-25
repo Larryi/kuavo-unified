@@ -102,10 +102,13 @@ scripts/kuavo_docker shell \
 指定文件只读挂载到该路径。进入容器后先启动 Server 和检查 YAML：
 
 ```bash
-export SERVER_ARGS='policy:checkpoint --policy.config=pi05_kuavo \
---policy.dir=/models/checkpoint --port=8000'
+OPENPI_POLICY_CONFIG=pi05_kuavo \
+OPENPI_POLICY_DIR=/models/checkpoint \
 docker/start_openpi_ros.sh bash
 ```
+
+推荐使用上述结构化变量，避免多行 `SERVER_ARGS` 中的引号或反斜杠被当作
+参数传给 Tyro。旧的单行 `SERVER_ARGS` 仍兼容。
 
 CLI 会为本次测试生成并显示一个待检查 YAML，挂载到：
 

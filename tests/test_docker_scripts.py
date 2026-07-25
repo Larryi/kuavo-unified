@@ -150,6 +150,10 @@ def test_openpi_runner_uses_single_ros_capable_image_entrypoint() -> None:
 def test_openpi_stack_launcher_does_not_eval_server_arguments() -> None:
     launcher = (ROOT / "docker/start_openpi_ros.sh").read_text(encoding="utf-8")
     assert "shlex.split" in launcher
+    assert "OPENPI_POLICY_CONFIG" in launcher
+    assert "OPENPI_POLICY_DIR" in launcher
+    assert '"--policy.config=${OPENPI_POLICY_CONFIG}"' in launcher
+    assert '"--policy.dir=${OPENPI_POLICY_DIR}"' in launcher
     assert 'bash -lc "exec scripts/kuavo_openpi' not in launcher
 
 

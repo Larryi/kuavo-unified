@@ -3,12 +3,14 @@ set -euo pipefail
 
 readonly REPO_ROOT="/root/kuavo_data_challenge"
 SERVER_ARGS="${SERVER_ARGS:-}"
+OPENPI_POLICY_CONFIG="${OPENPI_POLICY_CONFIG:-}"
+OPENPI_POLICY_DIR="${OPENPI_POLICY_DIR:-}"
 OPENPI_PORT="${OPENPI_PORT:-8000}"
 SERVER_LOG="${OPENPI_SERVER_LOG:-/tmp/openpi-policy-server.log}"
 STARTUP_TIMEOUT_S="${OPENPI_STARTUP_TIMEOUT_S:-300}"
 
-if [[ -z "${SERVER_ARGS}" ]]; then
-    echo "Set SERVER_ARGS to the arguments for OpenPI serve_policy.py." >&2
+if [[ -z "${SERVER_ARGS}" && ( -z "${OPENPI_POLICY_CONFIG}" || -z "${OPENPI_POLICY_DIR}" ) ]]; then
+    echo "Set OPENPI_POLICY_CONFIG and OPENPI_POLICY_DIR (recommended), or SERVER_ARGS." >&2
     exit 2
 fi
 
@@ -32,11 +34,21 @@ trap cleanup EXIT INT TERM
 cd "${REPO_ROOT}"
 source /opt/ros/noetic/setup.bash
 source "${REPO_ROOT}/myenv/bin/activate"
-# Preserve quoted native tyro arguments without evaluating shell operators.
-mapfile -d '' -t server_argv < <(
-    python -c \
-        'import os, shlex, sys; [sys.stdout.buffer.write(arg.encode() + b"\0") for arg in shlex.split(os.environ["SERVER_ARGS"])]'
-)
+# Prefer structured variables so shell quoting cannot silently drop required
+# Tyro options. Keep SERVER_ARGS for backwards compatibility.
+if [[ -n "${SERVER_ARGS}" ]]; then
+    mapfile -d '' -t server_argv < <(
+        python -c \
+            'import os, shlex, sys; [sys.stdout.buffer.write(arg.encode() + b"\0") for arg in shlex.split(os.environ["SERVER_ARGS"])]'
+    )
+else
+    server_argv=(
+        policy:checkpoint
+        "--policy.config=${OPENPI_POLICY_CONFIG}"
+        "--policy.dir=${OPENPI_POLICY_DIR}"
+        "--port=${OPENPI_PORT}"
+    )
+fi
 scripts/kuavo_openpi serve "${server_argv[@]}" >"${SERVER_LOG}" 2>&1 &
 server_pid=$!
 echo "OpenPI policy server PID ${server_pid}; log: ${SERVER_LOG}"
