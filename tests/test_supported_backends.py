@@ -42,9 +42,20 @@ def test_openpi_client_deploy_config_is_complete():
     assert cfg.inference.client_action_dim == 8
     assert cfg.inference.client_state_dim == 8
     assert cfg.inference.client_execute_steps == 1
+    assert cfg.inference.task_prompt == (
+        "Pick and Place the safety belt, cable and pin connector"
+    )
     assert cfg.env.obs_key_map["head_cam_h"]["handle"]["params"]["resize_wh"] == [848, 480]
     assert cfg.env.obs_key_map["wrist_cam_r"]["handle"]["params"]["resize_wh"] == [848, 480]
     assert "gripper" in cfg.env.obs_key_map
+
+
+def test_lingbot_v1_deploy_config_uses_dataset_task_prompt():
+    cfg = load_kuavo_config("configs/deploy/kuavo_env.lingbot.yaml")
+    assert cfg.inference.policy_type == "lingbot"
+    assert cfg.inference.task_prompt == (
+        "Pick and Place the safety belt, cable and pin connector"
+    )
 
 
 def test_classic_task_specific_deploy_configs_match_checkpoint_features():

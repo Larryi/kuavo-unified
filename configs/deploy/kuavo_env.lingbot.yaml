@@ -28,7 +28,7 @@ inference:
   method: lingbot_v1
   timestamp: container
   epoch: latest
-  task_prompt: ""
+  task_prompt: "Pick and Place the safety belt, cable and pin connector"
   lingbot_root: /root/kuavo_data_challenge/third_party/lingbot-vla
   qwen25_path: /assets/qwen
   lingbot_norm_stats_file: /assets/norm_stats/norm_stats.json

@@ -28,7 +28,7 @@ inference:
   client_state_dim: 8
   client_execute_steps: 1
   client_validate_schema: true
-  task_prompt: ""
+  task_prompt: "Pick and Place the safety belt, cable and pin connector"
   eval_episodes: 1
   max_episode_steps: 1000
   device: cpu
