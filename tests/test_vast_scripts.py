@@ -497,6 +497,10 @@ def test_restore_uses_official_pypi_and_private_env() -> None:
     pipeline = OPENPI_PIPELINE.read_text(encoding="utf-8")
     assert "mirrors.bfsu.edu.cn" not in pipeline
     assert ': "${VAST_PYPI_INDEX:=https://pypi.org/simple}"' in pipeline
+    openpi_lock = (
+        ROOT / "third_party" / "openpi-kuavo" / "uv.lock"
+    ).read_text(encoding="utf-8")
+    assert "mirrors.bfsu.edu.cn" not in openpi_lock
 
 
 def test_secret_reader_echoes_asterisks() -> None:
