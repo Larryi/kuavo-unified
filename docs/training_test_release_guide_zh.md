@@ -433,6 +433,12 @@ OpenPI 会明确询问总训练步数、warmup 步数、峰值学习率、cosine
 任何具体型号，仍检查 CUDA、GPU 数量和最低显存；仅在用户显式设置
 `REQUIRE_GPU_NAME` 时才限制型号。
 
+OpenPI 默认每 `1000` step 保存一次 checkpoint，并在最后一步额外保存；
+可用 `SAVE_INTERVAL` 覆盖。checkpoint 管理继续遵循只保留最新完整训练
+状态的磁盘策略。W&B 的 `camera_views` 会把模型输入的 `[-1, 1]` 图像
+反归一化为 uint8 后显示，并在 caption 和训练日志中报告每个相机的
+valid/masked 状态、shape 与数值范围。黑色预览本身不再与缺少相机混淆。
+
 OpenPI norm stats 默认使用 `NORM_NUM_WORKERS=0`，避免 TorchCodec/FFmpeg
 等原生解码器在 DataLoader 多进程 worker 中段错误；正式训练仍使用
 `NUM_WORKERS` 并行加载。若手动将 norm workers 调大，失败时流水线会自动
