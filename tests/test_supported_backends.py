@@ -54,6 +54,25 @@ def test_openpi_client_deploy_config_is_complete():
     assert "gripper" in cfg.env.obs_key_map
 
 
+def test_task2_openpi_client_deploy_config_is_bimanual():
+    cfg = load_kuavo_config("configs/deploy/kuavo_env.openpi_task2_client.yaml")
+    assert cfg.inference.policy_type == "client"
+    assert cfg.inference.client_action_dim == 16
+    assert cfg.inference.client_state_dim == 16
+    assert cfg.inference.openpi_policy_config == "pi05_kuavo_task2"
+    assert cfg.env.which_arm == "both"
+    assert "wrist_cam_l" in cfg.env.obs_key_map
+
+
+def test_lingbot_v2_task1_client_deploy_config_is_right_arm():
+    cfg = load_kuavo_config("configs/deploy/kuavo_env.lingbot_v2_task1.yaml")
+    assert cfg.inference.policy_type == "client"
+    assert cfg.inference.client_action_dim == 8
+    assert cfg.inference.client_state_dim == 8
+    assert cfg.inference.lingbot_v2_robot_name == "kuavo_v2_right_arm"
+    assert cfg.env.which_arm == "right"
+
+
 def test_lingbot_v1_deploy_config_uses_dataset_task_prompt():
     cfg = load_kuavo_config("configs/deploy/kuavo_env.lingbot.yaml")
     assert cfg.inference.policy_type == "lingbot"

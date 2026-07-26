@@ -29,7 +29,10 @@ Usage:
 
 Supported delivery pairs:
   task1 + openpi
+  task2 + openpi
   task1 + lingbot-v1
+  task2 + lingbot-v1
+  task1 + lingbot-v2
   task2 + lingbot-v2
   task2 + dp
   task3 + act
@@ -65,7 +68,10 @@ done
 }
 case "${TASK}:${ALGORITHM}" in
     task1:openpi) PROFILE="task1-openpi" ;;
+    task2:openpi) PROFILE="task2-openpi" ;;
     task1:lingbot-v1) PROFILE="task1-lingbot-v1" ;;
+    task2:lingbot-v1) PROFILE="task2-lingbot-v1" ;;
+    task1:lingbot-v2) PROFILE="task1-lingbot-v2" ;;
     task2:lingbot-v2) PROFILE="task2-lingbot-v2" ;;
     task2:dp) PROFILE="task2-dp" ;;
     task3:act) PROFILE="task3-act" ;;

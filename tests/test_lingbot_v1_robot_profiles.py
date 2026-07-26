@@ -16,6 +16,7 @@ def _arm_subtract_state(profile: str) -> bool:
 
 def test_relative_and_legacy_absolute_profiles_are_explicitly_separate() -> None:
     assert _arm_subtract_state("kuavo_v1_right_arm")
+    assert _arm_subtract_state("kuavo_v1_bimanual")
     assert not _arm_subtract_state("kuavo_v1_right_arm_absolute")
 
 
@@ -24,3 +25,13 @@ def test_current_lingbot_deploy_config_uses_legacy_absolute_profile() -> None:
         (ROOT / "configs/deploy/kuavo_env.lingbot.yaml").read_text(encoding="utf-8")
     )
     assert config["inference"]["lingbot_robot_name"] == "kuavo_v1_right_arm_absolute"
+
+
+def test_task2_lingbot_deploy_config_uses_bimanual_profile() -> None:
+    config = yaml.safe_load(
+        (ROOT / "configs/deploy/kuavo_env.lingbot_task2.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert config["env"]["which_arm"] == "both"
+    assert config["inference"]["lingbot_robot_name"] == "kuavo_v1_bimanual"

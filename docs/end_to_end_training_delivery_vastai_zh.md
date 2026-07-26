@@ -5,7 +5,10 @@
 | 任务 | 算法 | 本地/云端训练 | ROS Noetic 推理镜像 | 多数据集比例混合 |
 |---|---|---|---|---|
 | Task1 | OpenPI Pi0.5 | 支持 | 支持 | 支持 |
+| Task2 | OpenPI Pi0.5 | 支持 | 支持 | 支持 |
 | Task1 | LingBot-VLA v1 | 支持 | 支持 | 支持 |
+| Task2 | LingBot-VLA v1 | 支持（待真实云端训练验收） | 支持（待真实权重/ROS 验收） | 支持 |
+| Task1 | LingBot-VLA v2 | 支持（待真实云端训练验收） | 支持（待真实权重/ROS 验收） | 支持 |
 | Task2 | DP | 支持 | 支持 | 支持 |
 | Task3 | ACT | 支持 | 支持 | 支持 |
 | Task2 | LingBot-VLA v2 | 支持（待真实云端训练验收） | 支持（待真实权重/ROS 验收） | 支持 |
@@ -91,7 +94,7 @@ scripts/vast/restore_and_launch.sh
 2. 默认使用官方 `https://pypi.org/simple` 安装 `huggingface_hub`；
 3. 输入 HF token，每个字符以 `*` 回显，并调用 `whoami` 验证身份；
 4. 列出当前 HF 用户及组织可见的 dataset/model 仓库；
-5. 选择算法，自动绑定任务；
+5. 选择算法；三种 VLA 再选择 Task1/Task2，DP/ACT 自动绑定现有任务；
 6. 选择数据集；OpenPI、DP、ACT、LingBot-v1 均使用“逐个添加、确认是否
    继续”的流程选择多个，然后输入对应比例；
 7. 选择训练输出模型仓库；

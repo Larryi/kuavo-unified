@@ -109,6 +109,17 @@ def test_v1_robot_config_declares_eight_raw_dimensions():
     )
 
 
+def test_v1_bimanual_robot_config_declares_sixteen_raw_dimensions():
+    assert (
+        LingbotDeployPolicy._raw_dim_from_robot_config(
+            "kuavo_v1_bimanual",
+            "states",
+            "observation.state",
+        )
+        == 16
+    )
+
+
 def test_v1_robot_config_recovers_missing_training_features():
     joints, cameras = _robot_feature_defaults("kuavo_v1_right_arm")
 

@@ -31,13 +31,18 @@ DEST="${TMP}/kuavo_unified_stack"
 mkdir -p "${DEST}/configs/policy" "${DEST}/configs/robot_configs" \
     "${DEST}/kuavo_train" "${DEST}/tools" "${DEST}/scripts"
 cp -a "${ROOT}/configs/policy/lingbot" "${DEST}/configs/policy/"
-cp -a "${ROOT}/configs/robot_configs/kuavo_v2_right_arm.yaml" \
+cp -a \
+    "${ROOT}/configs/robot_configs/kuavo_v1_right_arm.yaml" \
+    "${ROOT}/configs/robot_configs/kuavo_v1_bimanual.yaml" \
     "${DEST}/configs/robot_configs/"
 cp -a "${ROOT}/kuavo_train/lingbot" "${DEST}/kuavo_train/"
 mkdir -p "${DEST}/third_party"
 cp -a "${ROOT}/third_party/lerobot" "${DEST}/third_party/"
 cp -a "${ROOT}/tools/export_lingbot_full_checkpoint.py" "${DEST}/tools/"
-cp -a "${ROOT}/scripts/run_task1_lingbot_full_pipeline.sh" "${DEST}/scripts/"
+cp -a \
+    "${ROOT}/scripts/run_task1_lingbot_full_pipeline.sh" \
+    "${ROOT}/scripts/run_lingbot_v1_full_pipeline.sh" \
+    "${DEST}/scripts/"
 cp -a "${ROOT}/requirements_lingbot_cloud.txt" "${DEST}/"
 rm -rf "${DEST}/third_party/lerobot/tests"
 find "${DEST}" -type d -name __pycache__ -prune -exec rm -rf {} +

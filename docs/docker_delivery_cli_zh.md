@@ -15,15 +15,18 @@ ACT、DP、LingBot-v1、LingBot-v2 或 OpenPI。所有操作也支持完整命�
 | `--task` | backend | 机器人配置 |
 |---|---|---|
 | `task1-openpi` | `openpi` | Task1 右臂 + Leju 夹爪 |
+| `task2-openpi` | `openpi` | Task2 双臂 + 双 Leju 夹爪 + 三相机 |
 | `task1-lingbot-v1` | `lingbot-v1` | Task1 右臂 + Leju 夹爪、旧权重绝对动作 |
+| `task2-lingbot-v1` | `lingbot-v1` | Task2 双臂 + 双 Leju 夹爪 + 三相机 |
+| `task1-lingbot-v2` | `lingbot-v2` | Task1 右臂 + Leju 夹爪 |
 | `task2-lingbot-v2` | `lingbot-v2` | Task2 双臂 + 双 Leju 夹爪 + 三相机 |
 | `task2-dp` | `dp` | Task2 双臂 + 双 Leju 夹爪 + 三相机 |
 | `task3-act` | `act` | Task3 右臂 + Qiangnao 末端 |
 
-每个 backend 都有上述唯一默认任务，也建议在自动化命令中显式写出
-`--task`。自定义 `--config` 只能覆盖同一模型/任务的细节，不能绕过任务
-绑定。LingBot-v2 的 `shell` 和 `release` 已开放，但真实权重和真机 ROS
-验收仍是发布门禁。
+三种 VLA backend 默认选择已有交付权重对应的任务，但在自动化命令中必须
+显式写出 `--task`。自定义 `--config` 只能覆盖同一模型/任务的细节，不能
+绕过任务绑定。新增 VLA 路由的真实权重、open-loop 和真机 ROS 仍是发布
+门禁。
 
 ## 安全边界
 

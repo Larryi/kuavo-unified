@@ -225,7 +225,7 @@ def test_lingbot_v2_image_builds_flash_attention_on_focal() -> None:
 
 
 def test_lingbot_training_compile_defaults_are_enabled() -> None:
-    v1_pipeline = (ROOT / "scripts/run_task1_lingbot_full_pipeline.sh").read_text()
+    v1_pipeline = (ROOT / "scripts/run_lingbot_v1_full_pipeline.sh").read_text()
     v1_config = (ROOT / "configs/policy/lingbot/task1_345_full.yaml").read_text()
     v2_config = (ROOT / "configs/policy/lingbot_v2/kuavo_lora.yaml").read_text()
     v2_task2 = (

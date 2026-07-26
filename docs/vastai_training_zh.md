@@ -30,7 +30,11 @@ Dry-run 只显示模型所需的数据、预训练权重及远端入口，不进
 | task | algorithm | 训练配置 |
 |---|---|---|
 | `task1` | `openpi` | Pi0.5 Kuavo Task1 |
+| `task2` | `openpi` | Pi0.5 Kuavo Task2 bimanual |
 | `task1` | `lingbot-v1` | Task1 LingBot-VLA full pipeline |
+| `task2` | `lingbot-v1` | Task2 LingBot-VLA bimanual full pipeline |
+| `task1` | `lingbot-v2` | Task1 right-arm LingBot-VLA-v2 |
+| `task2` | `lingbot-v2` | Task2 bimanual LingBot-VLA-v2 |
 | `task2` | `dp` | `dp_r2_h100.yaml` |
 | `task3` | `act` | `act_config.yaml` + `task=task3` |
 
@@ -94,7 +98,7 @@ LingBot-v1 的 resume 仓库必须保存完整
 | `dp` | unified `train_policy.py` | torchvision ResNet18 ImageNet 权重 |
 | `act` | unified `train_policy.py` | torchvision ResNet18 ImageNet 权重 |
 | `openpi` | OpenPI 原生 Vast 流水线 | Pi0.5 Orbax 基础参数、PaliGemma tokenizer |
-| `lingbot-v1` | 既有 Task1 完整流水线 | LingBot-VLA-4B、Qwen2.5-VL-3B |
+| `lingbot-v1` | `run_lingbot_v1_full_pipeline.sh` | LingBot-VLA-4B、Qwen2.5-VL-3B |
 | `lingbot-v2` | unified v2 launcher | LingBot-VLA-v2-6B、Qwen3-VL-4B、MoGe-2；Depth 与 DINO teacher 位于 v2 基础仓库 |
 
 所有 HF 仓库 ID 和目标位置均可通过私有环境文件覆盖。LingBot-v2 的

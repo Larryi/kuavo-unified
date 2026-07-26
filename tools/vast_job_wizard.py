@@ -18,11 +18,11 @@ from typing import Iterable
 
 
 JOB_MATRIX = {
-    "openpi": "task1",
-    "lingbot-v1": "task1",
-    "dp": "task2",
-    "act": "task3",
-    "lingbot-v2": "task2",
+    "openpi": ("task1", "task2"),
+    "lingbot-v1": ("task1", "task2"),
+    "lingbot-v2": ("task1", "task2"),
+    "dp": ("task2",),
+    "act": ("task3",),
 }
 RESUME_MARKERS = {
     "openpi": ("params/_METADATA",),
@@ -214,7 +214,12 @@ def main() -> int:
         raise SystemExit("huggingface_hub is required; run restore_and_launch.sh") from exc
 
     algorithm = choose("选择算法", list(JOB_MATRIX))
-    task = JOB_MATRIX[algorithm]
+    supported_tasks = JOB_MATRIX[algorithm]
+    task = (
+        supported_tasks[0]
+        if len(supported_tasks) == 1
+        else choose("选择任务", list(supported_tasks))
+    )
     print(f"任务路由：{task} + {algorithm}")
 
     token = masked_input("HF token（以 * 回显）: ").strip()

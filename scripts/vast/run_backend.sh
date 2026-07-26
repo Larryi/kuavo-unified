@@ -86,7 +86,7 @@ describe_profile() {
     lingbot-v1)
       echo "Pretrained: ${LINGBOT_MODEL_REPO:-robbyant/lingbot-vla-4b} -> ${WORK_ROOT}/models/LingBotVLA"
       echo "Tokenizer: ${QWEN_MODEL_REPO:-Qwen/Qwen2.5-VL-3B-Instruct} -> ${WORK_ROOT}/models/Qwen2.5_VL"
-      echo "Dispatch: scripts/run_task1_lingbot_full_pipeline.sh"
+      echo "Dispatch: scripts/run_lingbot_v1_full_pipeline.sh"
       ;;
     lingbot-v2)
       echo "Pretrained: ${LINGBOT_V2_MODEL_REPO:-robbyant/lingbot-vla-v2-6b} -> ${WORK_ROOT}/models/lingbot-vla-v2-6b"
@@ -565,7 +565,7 @@ case "${MODEL_BACKEND}" in
       TRAINING_TASK="${TRAINING_TASK}" \
       RUN_ID="${RESUME_RUN_ID:-${RUN_ID}}" \
       WORK_ROOT="${WORK_ROOT}" \
-      bash "${CODE_DIR}/scripts/run_task1_lingbot_full_pipeline.sh"
+      bash "${CODE_DIR}/scripts/run_lingbot_v1_full_pipeline.sh"
     SERVERCHAN_SENDKEY="${child_serverchan}"
     SERVERCHAN_URL="${child_serverchan_url}"
     UPLOAD_STATUS="success"

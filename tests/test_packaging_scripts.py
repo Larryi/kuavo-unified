@@ -122,3 +122,16 @@ def test_inference_packager_rejects_wrong_pair_before_build(tmp_path: Path) -> N
     )
     assert result.returncode == 2
     assert "Unsupported task/algorithm pair" in result.stderr
+
+
+def test_inference_packager_routes_all_vla_task_pairs() -> None:
+    text = (ROOT / "scripts/package_inference_image").read_text(encoding="utf-8")
+    for route in (
+        'task1:openpi) PROFILE="task1-openpi"',
+        'task2:openpi) PROFILE="task2-openpi"',
+        'task1:lingbot-v1) PROFILE="task1-lingbot-v1"',
+        'task2:lingbot-v1) PROFILE="task2-lingbot-v1"',
+        'task1:lingbot-v2) PROFILE="task1-lingbot-v2"',
+        'task2:lingbot-v2) PROFILE="task2-lingbot-v2"',
+    ):
+        assert route in text

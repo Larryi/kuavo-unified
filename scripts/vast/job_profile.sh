@@ -7,7 +7,21 @@ apply_vast_job_profile() {
     task1:openpi)
       export ROBOT_TASK="${ROBOT_TASK:-task1}"
       ;;
+    task2:openpi)
+      export ROBOT_TASK="${ROBOT_TASK:-task2}"
+      ;;
     task1:lingbot-v1)
+      ;;
+    task2:lingbot-v1)
+      export LINGBOT_V1_TRAIN_CONFIG="${LINGBOT_V1_TRAIN_CONFIG:-configs/policy/lingbot/task2_264_full.yaml}"
+      export LINGBOT_V1_DATA_NAME="${LINGBOT_V1_DATA_NAME:-kuavo_v1_bimanual}"
+      ;;
+    task1:lingbot-v2)
+      export TASK_NAME="${TASK_NAME:-r1}"
+      export METHOD_NAME="${METHOD_NAME:-lingbot_v2_right_arm_vast}"
+      export LINGBOT_V2_TRAIN_CONFIG="${LINGBOT_V2_TRAIN_CONFIG:-configs/policy/lingbot_v2/kuavo_lora.yaml}"
+      export LINGBOT_V2_NORM_CONFIG="${LINGBOT_V2_NORM_CONFIG:-configs/policy/lingbot_v2/kuavo_norm.yaml}"
+      export LINGBOT_V2_DATA_NAME="${LINGBOT_V2_DATA_NAME:-kuavo_v2_right_arm}"
       ;;
     task2:dp)
       export TRAIN_CONFIG_NAME="${TRAIN_CONFIG_NAME:-dp_r2_h100.yaml}"

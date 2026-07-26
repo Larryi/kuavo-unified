@@ -14,6 +14,7 @@ from tools.vast_bootstrap import (
     parse_ssh_command,
 )
 from tools.vast_job_wizard import (
+    JOB_MATRIX,
     normalize_dataset_mix,
     resume_repo_has_training_state,
     select_training_datasets,
@@ -220,6 +221,11 @@ def test_lingbot_v2_cloud_job_dry_run_is_available() -> None:
     assert result.returncode == 0, result.stderr
     assert "Backend: lingbot-v2" in result.stdout
     assert "Task: task2" in result.stdout
+
+
+def test_vla_algorithms_are_routed_to_task1_and_task2() -> None:
+    for algorithm in ("openpi", "lingbot-v1", "lingbot-v2"):
+        assert JOB_MATRIX[algorithm] == ("task1", "task2")
 
 
 def test_job_launcher_dry_run_describes_resume_without_network() -> None:
@@ -457,7 +463,7 @@ def test_lingbot_v2_cloud_assets_override_developer_paths() -> None:
 def test_lingbot_cloud_downloads_qwen_processor_without_base_weights() -> None:
     runner = REMOTE_RUNNER.read_text(encoding="utf-8")
     v1_pipeline = (
-        ROOT / "scripts/run_task1_lingbot_full_pipeline.sh"
+        ROOT / "scripts/run_lingbot_v1_full_pipeline.sh"
     ).read_text(encoding="utf-8")
     assert "download_hf_processor" in runner
     assert '"*processor_config.json"' in runner

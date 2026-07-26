@@ -44,6 +44,9 @@ def test_backend_routes_share_classic_without_merging_runtimes() -> None:
     assert BACKENDS["lingbot-v2"].image == "kuavo-lingbot-v2:latest"
     assert TASKS["task2-dp"].config.endswith("kuavo_env.dp.task2.yaml")
     assert TASKS["task3-act"].config.endswith("kuavo_env.act.task3.yaml")
+    assert TASKS["task2-openpi"].openpi_config == "pi05_kuavo_task2"
+    assert TASKS["task2-lingbot-v1"].robot_name == "kuavo_v1_bimanual"
+    assert TASKS["task1-lingbot-v2"].robot_name == "kuavo_v2_right_arm"
     assert TASKS["task2-lingbot-v2"].backend == "lingbot-v2"
 
 

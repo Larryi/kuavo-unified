@@ -49,6 +49,8 @@ class TaskSpec:
     task_prompt: str
     state_dim: int
     action_dim: int
+    robot_name: str | None = None
+    openpi_config: str | None = None
 
 
 BACKENDS = {
@@ -86,6 +88,17 @@ TASKS = {
         "Pick and Place the safety belt, cable and pin connector",
         8,
         8,
+        openpi_config="pi05_kuavo",
+    ),
+    "task2-openpi": TaskSpec(
+        "task2-openpi", "openpi",
+        "configs/deploy/kuavo_env.openpi_task2_client.yaml",
+        "Task2 bimanual + dual Leju claws, OpenPI Pi0.5",
+        "kuavo/task2_sz",
+        "Sorting sleeves by weight",
+        16,
+        16,
+        openpi_config="pi05_kuavo_task2",
     ),
     "task1-lingbot-v1": TaskSpec(
         "task1-lingbot-v1", "lingbot-v1", "configs/deploy/kuavo_env.lingbot.yaml",
@@ -94,6 +107,27 @@ TASKS = {
         "Pick and Place the safety belt, cable and pin connector",
         8,
         8,
+        robot_name="kuavo_v1_right_arm_absolute",
+    ),
+    "task2-lingbot-v1": TaskSpec(
+        "task2-lingbot-v1", "lingbot-v1",
+        "configs/deploy/kuavo_env.lingbot_task2.yaml",
+        "Task2 bimanual + dual Leju claws, LingBot-v1",
+        "task2_repaired_264",
+        "Sorting sleeves by weight",
+        16,
+        16,
+        robot_name="kuavo_v1_bimanual",
+    ),
+    "task1-lingbot-v2": TaskSpec(
+        "task1-lingbot-v2", "lingbot-v2",
+        "configs/deploy/kuavo_env.lingbot_v2_task1.yaml",
+        "Task1 right arm + Leju claw, LingBot-VLA v2",
+        "task1_repaired_345",
+        "Pick and Place the safety belt, cable and pin connector",
+        8,
+        8,
+        robot_name="kuavo_v2_right_arm",
     ),
     "task2-lingbot-v2": TaskSpec(
         "task2-lingbot-v2", "lingbot-v2",
@@ -103,6 +137,7 @@ TASKS = {
         "Sorting sleeves by weight",
         16,
         16,
+        robot_name="kuavo_v2_bimanual",
     ),
     "task2-dp": TaskSpec(
         "task2-dp", "dp", "configs/deploy/kuavo_env.dp.task2.yaml",
@@ -123,7 +158,11 @@ TASKS = {
 }
 
 DEFAULT_TASK_BY_BACKEND = {
-    task.backend: task.key for task in TASKS.values()
+    "openpi": "task1-openpi",
+    "lingbot-v1": "task1-lingbot-v1",
+    "lingbot-v2": "task2-lingbot-v2",
+    "dp": "task2-dp",
+    "act": "task3-act",
 }
 
 
@@ -485,7 +524,11 @@ def prepare_session_config(
         source,
         destination,
         pretrained_path=pretrained_path,
-        openpi_policy_config=args.openpi_config if spec.key == "openpi" else None,
+        openpi_policy_config=(
+            args.openpi_config or resolve_task(args, spec).openpi_config
+            if spec.key == "openpi"
+            else None
+        ),
     )
     return destination
 
@@ -623,9 +666,10 @@ def viewer_command(args: argparse.Namespace, spec: BackendSpec) -> None:
         str(port),
     ]
     if spec.key == "openpi":
+        openpi_config = args.openpi_config or task.openpi_config
         command += [
             "-e",
-            f"OPENPI_POLICY_CONFIG={args.openpi_config}",
+            f"OPENPI_POLICY_CONFIG={openpi_config}",
             "-e",
             f"OPENPI_POLICY_DIR={policy_path}",
             "-e",
@@ -641,7 +685,7 @@ def viewer_command(args: argparse.Namespace, spec: BackendSpec) -> None:
             "-e",
             "OPEN_LOOP_LINGBOT_V2_ROOT=/root/kuavo_data_challenge/third_party/lingbot-vla-v2",
             "-e",
-            f"OPEN_LOOP_ROBOT_NAME={args.robot_name or 'kuavo_v2_bimanual'}",
+            f"OPEN_LOOP_ROBOT_NAME={args.robot_name or task.robot_name}",
             "--entrypoint",
             "/opt/kuavo-env/bin/python",
             args.image or spec.image,
@@ -653,7 +697,7 @@ def viewer_command(args: argparse.Namespace, spec: BackendSpec) -> None:
                 "-e",
                 "OPEN_LOOP_LINGBOT_ROOT=/root/kuavo_data_challenge/third_party/lingbot-vla",
                 "-e",
-                f"OPEN_LOOP_ROBOT_NAME={args.robot_name or 'kuavo_v1_right_arm_absolute'}",
+                f"OPEN_LOOP_ROBOT_NAME={args.robot_name or task.robot_name}",
             ]
         command += [
             "--entrypoint",
@@ -746,7 +790,11 @@ def release_command(args: argparse.Namespace, spec: BackendSpec) -> None:
             source_config,
             config_dir / "kuavo_env.yaml",
             pretrained_path=policy_path,
-            openpi_policy_config=args.openpi_config if spec.key == "openpi" else None,
+            openpi_policy_config=(
+                args.openpi_config or resolve_task(args, spec).openpi_config
+                if spec.key == "openpi"
+                else None
+            ),
         )
         norm_dir: Path | None = None
         if norm:
@@ -868,7 +916,7 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--build-log")
     parser.add_argument("--container-name")
     parser.add_argument("--gpus", default="all")
-    parser.add_argument("--openpi-config", default="pi05_kuavo")
+    parser.add_argument("--openpi-config")
     parser.add_argument("--robot-name")
     parser.add_argument("--viewer-port", type=int, default=8501)
     parser.add_argument("--dry-run", action="store_true")

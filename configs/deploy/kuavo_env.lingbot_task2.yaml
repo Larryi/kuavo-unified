@@ -1,0 +1,39 @@
+env:
+  real: true
+  env_name: Kuavo-Real
+  control_mode: joint
+  eef_type: leju_claw
+  which_arm: both
+  only_arm: true
+  ros_rate: 10
+  image_size: &image_size [848, 480]
+  obs_key_map:
+    head_cam_h: ["/cam_h/color/image_raw/compressed", "CompressedImage", 30, *image_size]
+    wrist_cam_l: ["/cam_l/color/image_raw/compressed", "CompressedImage", 30, *image_size]
+    wrist_cam_r: ["/cam_r/color/image_raw/compressed", "CompressedImage", 30, *image_size]
+    joint_q: ["/sensors_data_raw", "sensorsData", 500]
+    leju_claw: ["/leju_claw_state", "lejuClawState", 500]
+  arm_state_keys: [joint_q, gripper]
+  frame_alignment: false
+  ratio: 1.0
+
+inference:
+  policy_type: lingbot
+  pretrained_path: "__PRETRAINED_PATH__"
+  eval_episodes: 1
+  max_episode_steps: 2000
+  seed: 42
+  start_seed: 42
+  device: cuda
+  task: task2
+  method: lingbot_v1
+  timestamp: container
+  epoch: latest
+  task_prompt: "Sorting sleeves by weight"
+  lingbot_root: /root/kuavo_data_challenge/third_party/lingbot-vla
+  qwen25_path: /assets/qwen
+  lingbot_norm_stats_file: /assets/norm_stats/norm_stats.json
+  lingbot_robot_name: kuavo_v1_bimanual
+  lingbot_use_length: 5
+  lingbot_chunk_ret: false
+  lingbot_use_compile: false

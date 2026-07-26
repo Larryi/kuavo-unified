@@ -76,22 +76,31 @@ YAML 和 manifest 是多个层，但通常 checkpoint 层占绝大部分。
 
 ## 2. 已支持任务矩阵与边界
 
-当前支持的是下面 5 条固定路由，不是“任意算法 × 任意任务”的笛卡尔积：
+当前支持下面 8 条路由。三种 VLA 均覆盖 Task1/Task2；DP/ACT 仍按当前
+交付任务固定：
 
 | task | algorithm | 全新微调 | 完整状态续训 | 同构数据集配比 | 动作/机器人 |
 |---|---|---:|---:|---:|---|
 | Task1 | OpenPI | 支持 | 支持 | 支持 | 右臂 7D + 单夹爪，共 8D |
+| Task2 | OpenPI | 支持 | 支持 | 支持 | 双臂 14D + 双夹爪，共 16D，三相机 |
 | Task1 | LingBot-v1 | 支持 | 支持 | 支持 | 右臂 7D + 单夹爪，共 8D |
-| Task2 | DP | 支持 | 支持 | 支持 | 双臂 14D + 双夹爪，共 16D |
+| Task2 | LingBot-v1 | 支持 | 支持 | 支持 | 双臂 14D + 双夹爪，共 16D，三相机 |
+| Task1 | LingBot-v2 | 支持 | 支持 | 支持 | 右臂 7D + 单夹爪，共 8D |
 | Task2 | LingBot-v2 | 支持 | 支持 | 支持 | 双臂 14D + 双夹爪，共 16D，三相机 |
+| Task2 | DP | 支持 | 支持 | 支持 | 双臂 14D + 双夹爪，共 16D |
 | Task3 | ACT | 支持 | 支持 | 支持 | 右臂 + Qiangnao 末端 |
+
+其中 Task2+OpenPI 复用 fork 中已有并验证过结构的 Task2 配置；新接入的
+Task2+LingBot-v1 与 Task1+LingBot-v2 已完成配置解析、路由 dry-run 和
+部署静态回归，但仍需要各自首次真实 VastAI 训练、open-loop 和 ROS mock
+作为最终验收。
 
 这里的“全新微调”是建立一个新的任务训练 run。OpenPI 和 LingBot 系列仍会
 加载各自基础模型；它不是从随机参数预训练 VLA 基模。DP/ACT 按各自配置
 初始化策略，ACT 仍使用 ResNet18 ImageNet 公共预训练权重。
 
-“任意任务”目前不成立。例如 Task1+ACT、Task2+OpenPI、Task3+LingBot
-尚无经过审核的 VastAI profile。要增加组合，至少需要补齐并验证：
+“任意任务”仍不成立。例如 Task1+ACT、Task1+DP、Task3+任一 VLA 尚无
+经过审核的 VastAI profile。要增加组合，至少需要补齐并验证：
 
 - 任务的 state/action 维度、手臂和末端映射；
 - 相机键、FPS、LeRobot feature schema 与任务文本；
@@ -202,7 +211,7 @@ python kuavo_train/train_policy.py ... \
   training.resume_timestamp=run_YYYYMMDD_HHMMSS
 ```
 
-### 4.3 OpenPI Task1
+### 4.3 OpenPI Task1/Task2
 
 更换数据分布时先重算 norm：
 
@@ -220,6 +229,18 @@ scripts/kuavo_openpi train pi05_kuavo \
   --num-train-steps=30000
 ```
 
+Task2 使用已经配置的双臂 16D/三相机 profile：
+
+```bash
+scripts/kuavo_openpi norm-stats pi05_kuavo_task2 \
+  --dataset-root /mnt/pqssd/Real_PQ_3.0/TASK2_SZ_Repaired/lerobot_task2_264 \
+  --tokenizer-path /mnt/pqssd/pretrained/google/paligemma-3b-pt-224/tokenizer.model
+
+scripts/kuavo_openpi train pi05_kuavo_task2 \
+  --exp-name=task2_full \
+  --num-train-steps=30000
+```
+
 部署 checkpoint 必须是 step 目录：
 
 ```text
@@ -230,7 +251,7 @@ scripts/kuavo_openpi train pi05_kuavo \
 
 不要只传 `45000/params`。完整 resume 还必须含优化器等 Orbax 训练状态。
 
-### 4.4 LingBot-v1 Task1
+### 4.4 LingBot-v1 Task1/Task2
 
 本地先 dry-run：
 
@@ -245,7 +266,16 @@ python kuavo_train/train_policy.py \
 完整云端流水线使用：
 
 ```bash
-scripts/run_task1_lingbot_full_pipeline.sh
+TRAINING_TASK=task1 scripts/run_lingbot_v1_full_pipeline.sh
+
+TRAINING_TASK=task2 scripts/run_lingbot_v1_full_pipeline.sh
+```
+
+Task2 使用：
+
+```text
+configs/policy/lingbot/task2_264_full.yaml
+configs/robot_configs/kuavo_v1_bimanual.yaml
 ```
 
 训练结束必须导出完整 HF checkpoint，并保留：
@@ -260,7 +290,15 @@ norm_stats.json
 当前旧权重 `/mnt/pqssd/hf_train_outputs/task1_lingbot` 使用绝对关节动作，
 部署时必须选择 `kuavo_v1_right_arm_absolute`。
 
-### 4.5 LingBot-v2 Task2
+### 4.5 LingBot-v2 Task1/Task2
+
+Task1 使用：
+
+```text
+configs/policy/lingbot_v2/kuavo_lora.yaml
+configs/policy/lingbot_v2/kuavo_norm.yaml
+configs/robot_configs/kuavo_v2_right_arm.yaml
+```
 
 Task2 使用：
 
@@ -373,7 +411,8 @@ bash scripts/vast/restore_and_launch.sh
 
 向导依次完成：
 
-1. 选择算法；任务按第 2 节矩阵自动绑定，不能选择未支持组合；
+1. 选择算法；OpenPI/LingBot-v1/v2 再选择 Task1 或 Task2，DP/ACT 自动
+   绑定现有任务；
 2. 输入 HF token，终端每个字符回显为 `*`，并通过 `whoami` 验证；
 3. 从 HF 用户/组织仓库选择一个或多个同构 LeRobot dataset；
 4. 逐个添加数据集并输入正比例，例如 `25,75`；
@@ -393,7 +432,7 @@ bash scripts/vast/restore_and_launch.sh
 ```
 
 远端逐个下载数据集、验证 schema，再生成带本地路径的 resolved manifest。
-五条已支持路由都使用该加权采样分布，并按相同分布计算或合并 norm。
+八条已支持路由都使用该加权采样分布，并按相同分布计算或合并 norm。
 
 HF token 至少要有：读取所选私有 dataset、读取所需基模/resume 仓库，以及
 创建或写入输出 model repo 的权限。私密配置写入：
@@ -557,6 +596,15 @@ scripts/kuavo_docker shell \
   --checkpoint /mnt/pqssd/training_outputs/lingbot_v2_task2_bimanual/run_20260709_134023/checkpoints/global_step_15000/hf_ckpt \
   --qwen /mnt/pqssd/pretrained/Qwen3-VL-4B-Instruct \
   --norm-stats assets/norm_stats/kuavo_v2_bimanual_task2_meanstd.json
+```
+
+同一套 Base 镜像也支持新增 VLA 路由；训练完成后只需替换对应 checkpoint、
+Qwen processor 和 norm：
+
+```text
+task2-openpi
+task2-lingbot-v1
+task1-lingbot-v2
 ```
 
 CLI 会显示本次渲染的 YAML，操作者确认后进入容器。检查 ROS master、
@@ -815,6 +863,10 @@ scripts/package_inference_image \
   --norm-stats assets/norm_stats/kuavo_v2_bimanual_task2_meanstd.json \
   --tag kuavo-task2-lingbot-v2:step15000
 ```
+
+`package_inference_image` 同时接受 `task2+openpi`、
+`task2+lingbot-v1` 和 `task1+lingbot-v2`；参数结构与上面的同算法示例
+相同，checkpoint/norm 必须来自对应任务，不能跨任务复用。
 
 LingBot release 只从 Qwen 目录提取 config、tokenizer 和 processor 文件，
 排除 `model*.safetensors` 基模权重。LingBot 的完整部署模型权重来自
