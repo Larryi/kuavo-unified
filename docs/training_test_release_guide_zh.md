@@ -445,6 +445,11 @@ OpenPI norm stats 默认使用 `NORM_NUM_WORKERS=0`，避免 TorchCodec/FFmpeg
 最终 JSON 精确加权合并，所以应缓存“最终训练配比”的 OpenPI norm，而不是
 直接平均多个 LeRobot stats。
 
+该向量化路径已用本地完整 Task1（345 episodes）实测：从启动、读取完整
+Parquet 到写出 norm 共约 13 秒；旧的逐帧视频路径仅 128 frames 就约
+10 秒。实际 VastAI 时间会受远端磁盘影响，但不应再出现数小时的
+`Computing stats` 视频解码进度。
+
 数据配比保存在 `DATASET_MIX_JSON`，例如：
 
 ```json

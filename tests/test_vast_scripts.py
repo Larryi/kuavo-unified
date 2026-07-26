@@ -247,6 +247,11 @@ def test_openpi_pipeline_has_no_default_gpu_model_lock() -> None:
     assert "--state-action-only" in text
     assert "Reused OpenPI norm cache" in text
     assert "api.dataset_info(repo_id).sha" in text
+    norm_script = (
+        ROOT / "third_party" / "openpi-kuavo" / "scripts" / "compute_norm_stats.py"
+    ).read_text(encoding="utf-8")
+    assert "Vectorized norm stats:" in norm_script
+    assert "episode_end_by_frame" in norm_script
     assert '"nvidia-cuda-nvcc-cu12==${CUDA_NVCC_VERSION}"' in text
     assert 'if [[ "${CUDA_NVCC_VERSION}" != "auto" ]]' in text
     assert '--lr-schedule.peak-lr "${PEAK_LR}"' in text
