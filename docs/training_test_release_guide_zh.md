@@ -435,6 +435,16 @@ OpenPI norm stats 默认使用 `NORM_NUM_WORKERS=0`，避免 TorchCodec/FFmpeg
 `NUM_WORKERS` 并行加载。若手动将 norm workers 调大，失败时流水线会自动
 用单进程重试。
 
+统计路径只读取 Parquet 中的 state/action 和 action horizon，不再解码
+训练图像。结果按 OpenPI config、HF dataset revision、数据集配比及权重生成
+稳定 cache key，并立即上传到 `NORM_REPO`（默认等于本次 `MODEL_REPO`）的
+`openpi_norm/` 目录。后续相同数据版本和配比会在训练前直接下载
+`norm_stats.json`；更新数据集或改变配比会自动产生新 key，避免误用旧 norm。
+因此也可以在本地先运行同一套 state/action-only 统计并把相同路径上传到
+`NORM_REPO`，VastAI 不需要重新计算。不同数据集的 q01/q99 不能仅靠各自
+最终 JSON 精确加权合并，所以应缓存“最终训练配比”的 OpenPI norm，而不是
+直接平均多个 LeRobot stats。
+
 数据配比保存在 `DATASET_MIX_JSON`，例如：
 
 ```json

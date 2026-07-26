@@ -244,6 +244,9 @@ def test_openpi_pipeline_has_no_default_gpu_model_lock() -> None:
     assert ': "${CUDA_NVCC_VERSION:=auto}"' in text
     assert ': "${NORM_NUM_WORKERS:=0}"' in text
     assert "Parallel norm-stat loading failed" in text
+    assert "--state-action-only" in text
+    assert "Reused OpenPI norm cache" in text
+    assert "api.dataset_info(repo_id).sha" in text
     assert '"nvidia-cuda-nvcc-cu12==${CUDA_NVCC_VERSION}"' in text
     assert 'if [[ "${CUDA_NVCC_VERSION}" != "auto" ]]' in text
     assert '--lr-schedule.peak-lr "${PEAK_LR}"' in text
