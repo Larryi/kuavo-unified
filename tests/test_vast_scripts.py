@@ -252,6 +252,16 @@ def test_openpi_pipeline_has_no_default_gpu_model_lock() -> None:
     ).read_text(encoding="utf-8")
     assert "Vectorized norm stats:" in norm_script
     assert "episode_end_by_frame" in norm_script
+    config_text = (
+        ROOT
+        / "third_party"
+        / "openpi-kuavo"
+        / "src"
+        / "openpi"
+        / "training"
+        / "config.py"
+    ).read_text(encoding="utf-8")
+    assert "episodes: tuple[int, ...] | None = None" in config_text
     assert '"nvidia-cuda-nvcc-cu12==${CUDA_NVCC_VERSION}"' in text
     assert 'if [[ "${CUDA_NVCC_VERSION}" != "auto" ]]' in text
     assert '--lr-schedule.peak-lr "${PEAK_LR}"' in text
