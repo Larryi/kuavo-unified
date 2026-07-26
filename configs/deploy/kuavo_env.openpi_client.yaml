@@ -18,16 +18,23 @@ env:
 
 inference:
   policy_type: client
+  pretrained_path: "__PRETRAINED_PATH__"
   client_protocol: msgpack_websocket
   client_host: 127.0.0.1
   client_port: 8000
-  client_connect_timeout_s: 60
+  client_connect_timeout_s: 300
   client_request_timeout_s: 30
   client_api_key_env: KUAVO_POLICY_API_KEY
   client_action_dim: 8
   client_state_dim: 8
   client_execute_steps: 1
   client_validate_schema: true
+  # script_auto_test.py owns the isolated JAX server lifecycle.
+  client_autostart: true
+  client_autostart_backend: openpi
+  client_server_startup_timeout_s: 300
+  client_server_log: /tmp/openpi-policy-server.log
+  openpi_policy_config: pi05_kuavo
   task_prompt: "Pick and Place the safety belt, cable and pin connector"
   eval_episodes: 1
   max_episode_steps: 1000

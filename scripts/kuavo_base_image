@@ -45,7 +45,7 @@ case "${BACKEND}" in
         ARCHIVE_VAR=""
         ;;
     lingbot-v1)
-        IMAGE="kdc_real_task1_lingbot:latest"
+        IMAGE="kuavo-lingbot-v1:latest"
         BUILD_SCRIPT="${ROOT}/docker/build_lingbot.sh"
         ARCHIVE_VAR="LINGBOT_ENV_ARCHIVE"
         ;;

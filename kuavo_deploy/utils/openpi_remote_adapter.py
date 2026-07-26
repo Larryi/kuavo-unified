@@ -58,9 +58,11 @@ class OpenPIRemotePolicy:
             request_timeout_s=request_timeout_s,
         )
         metadata = self._client.metadata
-        resolved_action_dim = action_dim or metadata.action_dim
-        if resolved_action_dim is None:
-            raise ValueError("OpenPI server metadata must provide action_dim or pass one explicitly")
+        # Physical Intelligence's native WebsocketPolicyServer may only expose
+        # generic metadata. Kuavo's current policies use matching state/action
+        # widths (Task1=8, Task2=16), so the configured state schema is a safe
+        # final fallback. The first response is still validated against it.
+        resolved_action_dim = action_dim or metadata.action_dim or state_dim
         camera_keys = tuple(metadata.camera_keys) or DEFAULT_CAMERA_KEYS
         horizon = metadata.action_horizon or action_horizon
         self.config = SimpleNamespace(

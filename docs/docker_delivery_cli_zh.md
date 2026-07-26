@@ -6,7 +6,7 @@
 scripts/kuavo_docker
 ```
 
-不带参数时交互选择 `build`、`shell`、`release` 或 `export`，再选择
+不带参数时交互选择 `build`、`shell`、`viewer`、`release` 或 `export`，再选择
 ACT、DP、LingBot-v1、LingBot-v2 或 OpenPI。所有操作也支持完整命令行
 参数，便于复现和云端脚本调用。
 
@@ -29,6 +29,8 @@ ACT、DP、LingBot-v1、LingBot-v2 或 OpenPI。所有操作也支持完整命�
 
 - 容器不会自动执行 `script_auto_test.py`。进入容器后必须先检查 YAML、
   ROS master、topic、相机、动作维度和末端类型，再由操作者手工启动。
+- OpenPI 和 LingBot-v2 的 YAML 会让这个标准入口自动启动、等待并清理
+  容器内模型 Server；操作者不需要再开第二个 shell 手工启动 Server。
 - `shell` 只读挂载 checkpoint 和运行资产，不把它们复制进环境镜像。
 - `release` 将选定资产固化进新的派生镜像，但不生成 TAR。
 - 只有显式执行 `export --yes` 才调用 `docker save`。
@@ -101,6 +103,12 @@ OpenPI 复用已经构建的 `kuavo-classic:latest`：
 scripts/kuavo_docker build --backend openpi
 ```
 
+OpenPI 使用 `uv sync --frozen` 保持子模块锁定的版本和哈希。镜像构建会在
+容器内副本中把锁文件的 PyPI registry 与 `files.pythonhosted.org` wheel
+URL 映射到 BFSU，不修改子模块工作树。下载继续使用原
+`/root/.cache/uv` BuildKit cache；只要没有执行 BuildKit prune，后续因
+统一仓库源码变化而重建时仍可复用已下载包。
+
 LingBot-v2 基础镜像：
 
 ```bash
@@ -157,21 +165,9 @@ scripts/kuavo_docker shell \
 `/models/checkpoint/params/params` 路径。
 
 当前固定 OpenPI 配置仍使用历史 PaliGemma tokenizer 绝对路径，CLI 会把
-指定文件只读挂载到该路径。进入容器后先启动 Server 和检查 YAML：
-
-```bash
-OPENPI_POLICY_CONFIG=pi05_kuavo \
-OPENPI_POLICY_DIR=/models/checkpoint \
-docker/start_openpi_ros.sh bash
-```
-
-推荐使用上述结构化变量，避免多行 `SERVER_ARGS` 中的引号或反斜杠被当作
-参数传给 Tyro。旧的单行 `SERVER_ARGS` 仍兼容，但端口是顶层选项，必须
-写在子命令之前：
-
-```bash
-SERVER_ARGS='--port=8000 policy:checkpoint --policy.config=pi05_kuavo --policy.dir=/models/checkpoint'
-```
+指定文件只读挂载到该路径。生成的 YAML 带
+`client_autostart_backend: openpi`；标准推理入口会直接启动 JAX Server，
+等待端口就绪后再创建 ROS PolicyClient，退出时自动清理 Server。
 
 CLI 会为本次测试生成并显示一个待检查 YAML，挂载到：
 
@@ -198,6 +194,42 @@ python kuavo_deploy/src/scripts/script_auto_test.py \
 ```bash
 scripts/kuavo_docker shell ... --dry-run
 ```
+
+## Open-loop Viewer：匹配的 Base 容器
+
+Viewer 也通过统一入口运行，不要求宿主机安装模型包。checkpoint、数据集
+和 processor 仍然只读挂载，不写入 Base 镜像：
+
+```bash
+scripts/kuavo_docker viewer \
+  --backend openpi \
+  --checkpoint /data/openpi/45000 \
+  --tokenizer /data/paligemma/tokenizer.model \
+  --dataset /data/lerobot_task1_345
+
+scripts/kuavo_docker viewer \
+  --backend lingbot-v1 \
+  --checkpoint /data/lingbot-v1/hf_ckpt \
+  --qwen /data/Qwen2.5-VL-processor \
+  --norm-stats /data/lingbot-v1/norm_stats.json \
+  --dataset /data/lerobot_task1_345
+
+scripts/kuavo_docker viewer \
+  --backend lingbot-v2 \
+  --checkpoint /data/lingbot-v2/hf_ckpt \
+  --qwen /data/Qwen3-VL-processor \
+  --norm-stats /data/lingbot-v2/norm_stats.json \
+  --dataset /data/lerobot_task2_264 \
+  --viewer-port 8502
+```
+
+浏览器访问打印的 `http://127.0.0.1:<port>`。界面内统一使用容器路径
+`/data/dataset`、`/models/checkpoint`、`/assets/qwen` 和
+`/assets/norm_stats/norm_stats.json`。OpenPI Viewer 命令会在同一容器
+自动管理 JAX Server；LingBot-v1/v2 则直接在各自模型环境中加载策略。
+任务 profile 还会预填 Repo ID、真实 dataset task 文本、state/action
+维度和 LingBot robot preset。OpenPI 不依赖原生 Server metadata 提供
+`action_dim`。
 
 ## 最终 release 镜像
 

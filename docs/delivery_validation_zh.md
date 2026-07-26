@@ -101,7 +101,7 @@ DP/ACT 可复用同一 client YAML。每次只启动一个 worker，
 
 - `kuavo-classic:latest`：Ubuntu 20.04/ROS Noetic，Torch
   2.7.1+cu126 识别 RTX 3090；
-- `kdc_real_task1_lingbot:latest`：flash-attn 2.7.0.post2 和
+- `kuavo-lingbot-v1:latest`：flash-attn 2.7.0.post2 和
   LingBot-v1 adapter 导入通过，Torch 识别 RTX 3090；
 - `kuavo-openpi:latest`：单一 Ubuntu 20.04.6/ROS Noetic 镜像，
   Classic Python 3.10 ROS Client 与 OpenPI Python 3.11/JAX Server

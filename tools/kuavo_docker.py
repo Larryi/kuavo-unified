@@ -45,6 +45,10 @@ class TaskSpec:
     backend: str
     config: str
     description: str
+    repo_id: str
+    task_prompt: str
+    state_dim: int
+    action_dim: int
 
 
 BACKENDS = {
@@ -57,7 +61,7 @@ BACKENDS = {
         "CLASSIC_ENV_ARCHIVE", "configs/deploy/kuavo_env.dp.yaml",
     ),
     "lingbot-v1": BackendSpec(
-        "lingbot-v1", "lingbot", "kdc_real_task1_lingbot:latest",
+        "lingbot-v1", "lingbot", "kuavo-lingbot-v1:latest",
         "docker/build_lingbot.sh", "LINGBOT_ENV_ARCHIVE",
         "configs/deploy/kuavo_env.lingbot.yaml", True, True,
     ),
@@ -78,23 +82,43 @@ TASKS = {
     "task1-openpi": TaskSpec(
         "task1-openpi", "openpi", "configs/deploy/kuavo_env.openpi_client.yaml",
         "Task1 right arm + Leju claw, OpenPI Pi0.5",
+        "kuavo/task1_sz",
+        "Pick and Place the safety belt, cable and pin connector",
+        8,
+        8,
     ),
     "task1-lingbot-v1": TaskSpec(
         "task1-lingbot-v1", "lingbot-v1", "configs/deploy/kuavo_env.lingbot.yaml",
         "Task1 right arm + Leju claw, legacy absolute-action LingBot-v1",
+        "task1_repaired_345",
+        "Pick and Place the safety belt, cable and pin connector",
+        8,
+        8,
     ),
     "task2-lingbot-v2": TaskSpec(
         "task2-lingbot-v2", "lingbot-v2",
         "configs/deploy/kuavo_env.lingbot_v2.yaml",
         "Task2 bimanual + dual Leju claws, LingBot-VLA v2",
+        "task2_repaired_264",
+        "Sorting sleeves by weight",
+        16,
+        16,
     ),
     "task2-dp": TaskSpec(
         "task2-dp", "dp", "configs/deploy/kuavo_env.dp.task2.yaml",
         "Task2 bimanual + dual Leju claws, Diffusion Policy",
+        "task2_repaired_264",
+        "Sorting sleeves by weight",
+        16,
+        16,
     ),
     "task3-act": TaskSpec(
         "task3-act", "act", "configs/deploy/kuavo_env.act.task3.yaml",
         "Task3 right arm + Qiangnao end effector, ACT",
+        "task3_repaired_165",
+        "Grab the car body panel and place it in the area",
+        8,
+        8,
     ),
 }
 
@@ -359,6 +383,7 @@ def render_config(
     destination: Path,
     *,
     pretrained_path: str,
+    openpi_policy_config: str | None = None,
 ) -> None:
     text = source.read_text(encoding="utf-8")
     if "__PRETRAINED_PATH__" in text:
@@ -368,6 +393,18 @@ def render_config(
             f"自定义配置 {source} 的 pretrained_path 未指向 {pretrained_path}，"
             "请使用 __PRETRAINED_PATH__ 占位符或容器内路径。"
         )
+    if openpi_policy_config is not None:
+        lines = text.splitlines()
+        replaced = False
+        for index, line in enumerate(lines):
+            if line.lstrip().startswith("openpi_policy_config:"):
+                indent = line[: len(line) - len(line.lstrip())]
+                lines[index] = f"{indent}openpi_policy_config: {openpi_policy_config}"
+                replaced = True
+                break
+        if not replaced:
+            raise UsageError(f"OpenPI 配置缺少 openpi_policy_config: {source}")
+        text = "\n".join(lines) + ("\n" if text.endswith("\n") else "")
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(text, encoding="utf-8")
 
@@ -444,7 +481,12 @@ def prepare_session_config(
         return Path("/planned/kuavo_env.yaml")
     session = SESSION_ROOT / f"{spec.key}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     destination = session / "kuavo_env.yaml"
-    render_config(source, destination, pretrained_path=pretrained_path)
+    render_config(
+        source,
+        destination,
+        pretrained_path=pretrained_path,
+        openpi_policy_config=args.openpi_config if spec.key == "openpi" else None,
+    )
     return destination
 
 
@@ -482,19 +524,6 @@ def shell_command(args: argparse.Namespace, spec: BackendSpec) -> None:
         print(config.read_text(encoding="utf-8").rstrip())
         print("--------------------------")
     print("容器内人工推理命令:")
-    if spec.key == "openpi":
-        print(
-            f"  OPENPI_POLICY_CONFIG={args.openpi_config} "
-            f"OPENPI_POLICY_DIR={policy_path} "
-            "docker/start_openpi_ros.sh bash"
-        )
-    elif spec.key == "lingbot-v2":
-        print(
-            f"  LINGBOT_V2_POLICY_DIR={policy_path} "
-            "LINGBOT_V2_QWEN_DIR=/assets/qwen "
-            "LINGBOT_V2_NORM_STATS=/assets/norm_stats/norm_stats.json "
-            "docker/start_lingbot_v2_ros.sh bash"
-        )
     print(
         "  python kuavo_deploy/src/scripts/script_auto_test.py "
         "--task auto_test --config configs/deploy/kuavo_env.yaml"
@@ -503,6 +532,141 @@ def shell_command(args: argparse.Namespace, spec: BackendSpec) -> None:
         "确认已检查 YAML，启动测试容器？",
         yes=args.yes,
         dry_run=args.dry_run,
+    )
+    run(command, dry_run=args.dry_run)
+
+
+def viewer_command(args: argparse.Namespace, spec: BackendSpec) -> None:
+    """Run the Streamlit viewer in the backend's matching Base image."""
+
+    checkpoint, qwen, norm, runtime_assets, tokenizer = collect_assets(args, spec)
+    dataset = resolve_existing(
+        prompt_path("LeRobot dataset 路径", args.dataset),
+        kind="dataset",
+        directory=True,
+    )
+    policy_path = checkpoint_container_path(args.checkpoint_subpath)
+    port = int(args.viewer_port)
+    task = resolve_task(args, spec)
+    viewer_policy_type = {
+        "act": "act",
+        "dp": "diffusion",
+        "lingbot-v1": "lingbot",
+        "lingbot-v2": "lingbot_v2",
+        "openpi": "openpi",
+    }[spec.key]
+    command = [
+        "docker",
+        "run",
+        "--rm",
+        "-it",
+        "--init",
+        "--name",
+        args.container_name or f"kuavo-{spec.key}-viewer",
+        "--network",
+        "host",
+        "--gpus",
+        args.gpus,
+        "--ipc",
+        "host",
+        "--shm-size",
+        "8g",
+        "-v",
+        f"{checkpoint}:/models/checkpoint:ro",
+        "-v",
+        f"{dataset}:/data/dataset:ro",
+        "-e",
+        "OPEN_LOOP_DATASET_ROOT=/data/dataset",
+        "-e",
+        f"OPEN_LOOP_POLICY_PATH={policy_path}",
+        "-e",
+        f"OPEN_LOOP_POLICY_TYPE={viewer_policy_type}",
+        "-e",
+        f"OPEN_LOOP_REPO_ID={task.repo_id}",
+        "-e",
+        f"OPEN_LOOP_TASK={task.task_prompt}",
+        "-e",
+        f"OPEN_LOOP_STATE_DIM={task.state_dim}",
+        "-e",
+        f"OPEN_LOOP_ACTION_DIM={task.action_dim}",
+    ]
+    if qwen:
+        command += [
+            "-v",
+            f"{qwen}:/assets/qwen:ro",
+            "-e",
+            "OPEN_LOOP_QWEN_PATH=/assets/qwen",
+        ]
+    if norm:
+        command += [
+            "-v",
+            f"{norm}:/assets/norm_stats/norm_stats.json:ro",
+            "-e",
+            "OPEN_LOOP_NORM_STATS=/assets/norm_stats/norm_stats.json",
+        ]
+    if runtime_assets:
+        command += ["-v", f"{runtime_assets}:/assets/runtime:ro"]
+    if tokenizer:
+        command += [
+            "-v",
+            f"{tokenizer}:/mnt/pqssd/pretrained/google/paligemma-3b-pt-224/tokenizer.model:ro",
+        ]
+
+    viewer_args = [
+        "-m",
+        "streamlit",
+        "run",
+        "tools/open_loop_viewer.py",
+        "--server.address",
+        "0.0.0.0",
+        "--server.port",
+        str(port),
+    ]
+    if spec.key == "openpi":
+        command += [
+            "-e",
+            f"OPENPI_POLICY_CONFIG={args.openpi_config}",
+            "-e",
+            f"OPENPI_POLICY_DIR={policy_path}",
+            "-e",
+            "OPEN_LOOP_OPENPI_ENDPOINT=127.0.0.1:8000",
+            "--entrypoint",
+            "/root/kuavo_data_challenge/docker/start_openpi_ros.sh",
+            args.image or spec.image,
+            "python",
+            *viewer_args,
+        ]
+    elif spec.key == "lingbot-v2":
+        command += [
+            "-e",
+            "OPEN_LOOP_LINGBOT_V2_ROOT=/root/kuavo_data_challenge/third_party/lingbot-vla-v2",
+            "-e",
+            f"OPEN_LOOP_ROBOT_NAME={args.robot_name or 'kuavo_v2_bimanual'}",
+            "--entrypoint",
+            "/opt/kuavo-env/bin/python",
+            args.image or spec.image,
+            *viewer_args,
+        ]
+    else:
+        if spec.key == "lingbot-v1":
+            command += [
+                "-e",
+                "OPEN_LOOP_LINGBOT_ROOT=/root/kuavo_data_challenge/third_party/lingbot-vla",
+                "-e",
+                f"OPEN_LOOP_ROBOT_NAME={args.robot_name or 'kuavo_v1_right_arm_absolute'}",
+            ]
+        command += [
+            "--entrypoint",
+            "python",
+            args.image or spec.image,
+            *viewer_args,
+        ]
+
+    print(f"Viewer URL: http://127.0.0.1:{port}")
+    print(
+        "Viewer defaults: "
+        f"dataset=/data/dataset, policy={policy_path}, repo_id={task.repo_id}, "
+        f"task={task.task_prompt!r}, state/action={task.state_dim}/{task.action_dim}"
     )
     run(command, dry_run=args.dry_run)
 
@@ -579,8 +743,10 @@ def release_command(args: argparse.Namespace, spec: BackendSpec) -> None:
         config_dir = staging / "config"
         config_dir.mkdir()
         render_config(
-            source_config, config_dir / "kuavo_env.yaml",
+            source_config,
+            config_dir / "kuavo_env.yaml",
             pretrained_path=policy_path,
+            openpi_policy_config=args.openpi_config if spec.key == "openpi" else None,
         )
         norm_dir: Path | None = None
         if norm:
@@ -680,7 +846,11 @@ def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Kuavo Docker 交互构建、测试挂载、release 和显式 TAR 导出",
     )
-    parser.add_argument("command", nargs="?", choices=["build", "shell", "release", "export"])
+    parser.add_argument(
+        "command",
+        nargs="?",
+        choices=["build", "shell", "viewer", "release", "export"],
+    )
     parser.add_argument("--backend", choices=sorted(BACKENDS))
     parser.add_argument("--task", choices=sorted(TASKS))
     parser.add_argument("--checkpoint")
@@ -689,6 +859,7 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--norm-stats")
     parser.add_argument("--runtime-assets")
     parser.add_argument("--tokenizer")
+    parser.add_argument("--dataset")
     parser.add_argument("--config")
     parser.add_argument("--env-archive")
     parser.add_argument("--image")
@@ -698,6 +869,8 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--container-name")
     parser.add_argument("--gpus", default="all")
     parser.add_argument("--openpi-config", default="pi05_kuavo")
+    parser.add_argument("--robot-name")
+    parser.add_argument("--viewer-port", type=int, default=8501)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--yes", action="store_true")
     return parser
@@ -708,7 +881,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         command = args.command or prompt_choice(
-            "选择操作", ["build", "shell", "release", "export"],
+            "选择操作", ["build", "shell", "viewer", "release", "export"],
         )
         if command == "export":
             export_command(args)
@@ -719,6 +892,8 @@ def main() -> int:
             build_command(args, spec)
         elif command == "shell":
             shell_command(args, spec)
+        elif command == "viewer":
+            viewer_command(args, spec)
         elif command == "release":
             release_command(args, spec)
         return 0

@@ -42,6 +42,10 @@ def test_openpi_client_deploy_config_is_complete():
     assert cfg.inference.client_action_dim == 8
     assert cfg.inference.client_state_dim == 8
     assert cfg.inference.client_execute_steps == 1
+    assert cfg.inference.client_autostart is True
+    assert cfg.inference.client_autostart_backend == "openpi"
+    assert cfg.inference.openpi_policy_config == "pi05_kuavo"
+    assert cfg.inference.pretrained_path == "__PRETRAINED_PATH__"
     assert cfg.inference.task_prompt == (
         "Pick and Place the safety belt, cable and pin connector"
     )

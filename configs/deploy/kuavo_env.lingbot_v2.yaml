@@ -2,7 +2,7 @@ env:
   env_name: Kuavo-Real
   control_mode: joint
   eef_type: leju_claw
-  which_arm: right
+  which_arm: both
   head_init: null
   ros_rate: 10
   only_arm: true
@@ -10,6 +10,7 @@ env:
   depth_range: [0, 1500]
   obs_key_map:
     head_cam_h: ["/cam_h/color/image_raw/compressed", "CompressedImage", 30, *image_size]
+    wrist_cam_l: ["/cam_l/color/image_raw/compressed", "CompressedImage", 30, *image_size]
     wrist_cam_r: ["/cam_r/color/image_raw/compressed", "CompressedImage", 30, *image_size]
     joint_q: ["/sensors_data_raw", "sensorsData", 500]
     leju_claw: ["/leju_claw_state", "lejuClawState", 500]
@@ -28,10 +29,15 @@ inference:
   client_connect_timeout_s: 300
   client_request_timeout_s: 120
   client_api_key_env: KUAVO_POLICY_API_KEY
-  client_action_dim: 8
-  client_state_dim: 8
+  client_action_dim: 16
+  client_state_dim: 16
   client_execute_steps: 1
   client_validate_schema: true
+  # Keep ROS in Classic Python and let script_auto_test.py own the v2 worker.
+  client_autostart: true
+  client_autostart_backend: lingbot_v2
+  client_server_startup_timeout_s: 300
+  client_server_log: /tmp/lingbot-v2-policy-server.log
   pretrained_path: "__PRETRAINED_PATH__"
   eval_episodes: 1
   max_episode_steps: 2000
@@ -43,9 +49,9 @@ inference:
   timestamp: run_x
   epoch: latest
   task_prompt: Pick and place the target object
-  lingbot_v2_root: /opt/kuavo/third_party/lingbot-vla-v2
+  lingbot_v2_root: /root/kuavo_data_challenge/third_party/lingbot-vla-v2
   qwen3vl_path: /assets/qwen
-  lingbot_v2_robot_name: kuavo_v2_right_arm
+  lingbot_v2_robot_name: kuavo_v2_bimanual
   lingbot_v2_use_compile: false
   lingbot_use_length: 5
   lingbot_chunk_ret: false

@@ -71,7 +71,6 @@ ARG PIP_INDEX_URL=https://mirrors.bfsu.edu.cn/pypi/web/simple
 
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
-    PATH=/opt/kuavo-env/bin:${PATH} \
     CC=/usr/bin/gcc \
     CXX=/usr/bin/g++ \
     PIP_INDEX_URL=${PIP_INDEX_URL} \
@@ -102,8 +101,9 @@ COPY --from=lingbot_v2_source . ./third_party/lingbot-vla-v2
 RUN --mount=type=cache,target=/root/.cache/pip \
     /opt/kuavo-env/bin/python -m pip install -e . --no-deps --root-user-action=ignore && \
     /opt/kuavo-env/bin/python -m pip install -r requirements_policy_client.txt --root-user-action=ignore && \
+    /opt/kuavo-env/bin/python -m pip install streamlit==1.58.0 --root-user-action=ignore && \
     /opt/kuavo-env/bin/python -m pip install -e ./third_party/lingbot-vla-v2 --no-deps --root-user-action=ignore && \
-    /opt/kuavo-env/bin/python -c "import flash_attn, torch, transformers, websockets; assert torch.__version__.startswith('2.8.'); assert flash_attn.__version__ == '2.8.3'; print(torch.__version__, transformers.__version__, websockets.__version__, flash_attn.__version__)" && \
+    /opt/kuavo-env/bin/python -c "import flash_attn, streamlit, torch, transformers, websockets; assert torch.__version__.startswith('2.8.'); assert flash_attn.__version__ == '2.8.3'; print(torch.__version__, transformers.__version__, websockets.__version__, flash_attn.__version__, streamlit.__version__)" && \
     bash -lc 'source /opt/ros/noetic/setup.bash && source myenv/bin/activate && python -c "import rospy; from kuavo_deploy.kuavo_env.KuavoBaseRosEnv import KuavoBaseRosEnv; print(\"LingBot-v2 ROS client imports: OK\")"'
 
 ENTRYPOINT ["/opt/kuavo-env/bin/python", "tools/policy_worker.py"]

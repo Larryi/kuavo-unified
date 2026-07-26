@@ -40,8 +40,9 @@ OpenPI 使用固定子模块的 `uv.lock`，通过独立 BuildKit context 导入
 而不是 Ubuntu 22.04 的纯推理 Worker。
 
 LingBot-v2 最终镜像也继承 `kuavo-classic:latest`。模型 Server 使用
-`/opt/kuavo-env`，ROS Client 使用 Classic `myenv`，由
-`docker/start_lingbot_v2_ros.sh` 在同一容器内管理生命周期。
+`/opt/kuavo-env`，ROS Client 使用 Classic `myenv`。正式部署 YAML 通过
+`client_autostart_backend: lingbot_v2` 让 `script_auto_test.py` 管理
+生命周期；旧的 `docker/start_lingbot_v2_ros.sh` 仍保留给单独调试 worker。
 
 ## 启动模型服务
 
@@ -76,19 +77,18 @@ SERVER_ARGS='--port=8000 policy:checkpoint --policy.config=pi05_kuavo --policy.d
 docker/run_policy_worker.sh
 ```
 
-该命令启动单一 `kuavo-openpi:latest` 容器。默认只启动容器内 Policy
-Server，操作者随后可在同一容器中执行 ROS 推理命令；也可以直接调用：
+该命令仍可用于单独调试 Policy Server。正式部署无需先调用它；检查 YAML
+后直接运行标准入口：
 
 ```bash
-docker/start_openpi_ros.sh \
-  python kuavo_deploy/src/scripts/script.py \
-  --task run \
-  --config configs/deploy/kuavo_env.openpi_client.yaml
+python kuavo_deploy/src/scripts/script_auto_test.py \
+  --task auto_test \
+  --config configs/deploy/kuavo_env.yaml
 ```
 
-启动器先等待 localhost Policy Server 监听，再启动 ROS Client，并在
-任一进程退出时清理另一进程。真机动作命令仍必须由操作者在急停可用时
-显式给出，镜像默认不会自动发布动作。
+标准入口读取 `client_autostart` 配置，先启动并等待 localhost Policy
+Server，再创建 ROS Client，并在任务退出时清理 Server。真机动作命令仍
+必须由操作者在急停可用时显式给出，镜像默认不会自动发布动作。
 
 如需协议鉴权，创建仅含 `KUAVO_POLICY_API_KEY=...` 的 env 文件并执行
 `chmod 600`，再设置 `API_ENV_FILE=/secure/policy.env`。runner 不会删除

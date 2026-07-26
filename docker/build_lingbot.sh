@@ -3,7 +3,7 @@ set -euo pipefail
 
 readonly EXPECTED_LINGBOT_COMMIT="4eb34b7693a0565c67433f8fac9c59a2e67eb60b"
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-IMAGE_NAME="${IMAGE_NAME:-kdc_real_task1_lingbot}"
+IMAGE_NAME="${IMAGE_NAME:-kuavo-lingbot-v1}"
 ENV_ARCHIVE="${LINGBOT_ENV_ARCHIVE:-}"
 BUILD_LOG="${BUILD_LOG:-/tmp/${IMAGE_NAME}.build.log}"
 DRY_RUN="${DRY_RUN:-0}"

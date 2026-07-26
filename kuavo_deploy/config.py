@@ -197,6 +197,11 @@ class ConfigInference:
     client_state_dim: Optional[int] = None
     client_execute_steps: int = 1
     client_validate_schema: bool = True
+    client_autostart: bool = False
+    client_autostart_backend: str = ""
+    client_server_startup_timeout_s: float = 300.0
+    client_server_log: str = "/tmp/kuavo-policy-server.log"
+    openpi_policy_config: str = "pi05_kuavo"
 
     def validate(self):
         if self.policy_type not in ["diffusion", "act", "lingbot", "lingbot_v2", "client"]:
@@ -211,6 +216,16 @@ class ConfigInference:
             raise ValueError("client_port must be in [1, 65535]")
         if self.client_connect_timeout_s <= 0 or self.client_request_timeout_s <= 0:
             raise ValueError("client timeouts must be positive")
+        if self.client_server_startup_timeout_s <= 0:
+            raise ValueError("client_server_startup_timeout_s must be positive")
+        if self.client_autostart and self.client_autostart_backend not in {
+            "openpi",
+            "lingbot_v2",
+        }:
+            raise ValueError(
+                "client_autostart_backend must be openpi or lingbot_v2 when "
+                "client_autostart is enabled"
+            )
         for name, value in (
             ("client_action_dim", self.client_action_dim),
             ("client_state_dim", self.client_state_dim),

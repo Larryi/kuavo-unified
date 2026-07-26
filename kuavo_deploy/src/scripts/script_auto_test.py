@@ -145,7 +145,10 @@ class ArmMove:
     def auto_test(self) -> None:
         """Execute automated tests"""
         from kuavo_deploy.src.eval.sim_auto_test import kuavo_eval_autotest
-        kuavo_eval_autotest(config=self.config)
+        from kuavo_deploy.utils.policy_server_manager import managed_policy_server
+
+        with managed_policy_server(self.inference_config, log_model):
+            kuavo_eval_autotest(config=self.config)
     
 def parse_args():
     """Parse command line parameters"""

@@ -24,6 +24,21 @@ def main() -> None:
     parser.add_argument("checkpoint", type=Path)
     parser.add_argument("--lingbot-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--run-config",
+        type=Path,
+        help="Explicit lingbotvla_cli.yaml path for checkpoints downloaded without the original run layout.",
+    )
+    parser.add_argument(
+        "--model-assets",
+        type=Path,
+        help="Explicit directory containing config/tokenizer assets to copy into the HF checkpoint.",
+    )
+    parser.add_argument(
+        "--norm-stats",
+        type=Path,
+        help="Optional norm_stats.json to include in the exported HF checkpoint.",
+    )
     parser.add_argument("--save-dtype", choices=("bfloat16", "float32"), default="bfloat16")
     parser.add_argument("--lora-rank", type=int)
     parser.add_argument("--lora-alpha", type=float)
@@ -46,12 +61,22 @@ def main() -> None:
         if not args.force:
             raise FileExistsError(f"Output exists: {output}; pass --force to replace it")
 
-    run_dir = find_run_dir(checkpoint)
-    config = yaml.safe_load((run_dir / "lingbotvla_cli.yaml").read_text(encoding="utf-8"))
+    config_file = args.run_config.resolve() if args.run_config else None
+    if config_file is None:
+        run_dir = find_run_dir(checkpoint)
+        config_file = run_dir / "lingbotvla_cli.yaml"
+    else:
+        if not config_file.is_file():
+            raise FileNotFoundError(f"LingBot run config not found: {config_file}")
+        run_dir = config_file.parent
+    config = yaml.safe_load(config_file.read_text(encoding="utf-8"))
     ckpt_manager = str(config.get("train", {}).get("ckpt_manager", "dcp"))
-    assets_dir = run_dir / "model_assets"
+    assets_dir = args.model_assets.resolve() if args.model_assets else run_dir / "model_assets"
     if not assets_dir.is_dir():
         raise FileNotFoundError(f"Model assets directory not found: {assets_dir}")
+    norm_stats = args.norm_stats.resolve() if args.norm_stats else None
+    if norm_stats is not None and not norm_stats.is_file():
+        raise FileNotFoundError(f"Norm statistics not found: {norm_stats}")
 
     if args.dry_run:
         print(
@@ -98,7 +123,9 @@ def main() -> None:
             shutil.copytree(source, destination)
         else:
             shutil.copy2(source, destination)
-    shutil.copy2(run_dir / "lingbotvla_cli.yaml", output / "lingbotvla_cli.yaml")
+    shutil.copy2(config_file, output / "lingbotvla_cli.yaml")
+    if norm_stats is not None:
+        shutil.copy2(norm_stats, output / "norm_stats.json")
     save_model_weights(output, state_dict, save_dtype=args.save_dtype)
 
     config_file = output / "config.json"

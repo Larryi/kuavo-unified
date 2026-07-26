@@ -165,7 +165,7 @@ def test_shell_dry_run_mounts_checkpoint_and_never_runs_auto_test(tmp_path: Path
     assert "script_auto_test.py" not in command_line
 
 
-def test_openpi_shell_prints_structured_server_arguments(tmp_path: Path) -> None:
+def test_openpi_shell_renders_autostart_server_config(tmp_path: Path) -> None:
     checkpoint = tmp_path / "openpi" / "45000"
     params = checkpoint / "params"
     params.mkdir(parents=True)
@@ -191,8 +191,9 @@ def test_openpi_shell_prints_structured_server_arguments(tmp_path: Path) -> None
     assert result.returncode == 0, result.stderr
     assert "自动改用 checkpoint step" in result.stdout
     assert f"{checkpoint.resolve()}:/models/checkpoint:ro" in result.stdout
-    assert "OPENPI_POLICY_CONFIG=pi05_kuavo" in result.stdout
-    assert "OPENPI_POLICY_DIR=/models/checkpoint" in result.stdout
+    assert "python kuavo_deploy/src/scripts/script_auto_test.py" in result.stdout
+    assert "OPENPI_POLICY_CONFIG=" not in result.stdout
+    assert "OPENPI_POLICY_DIR=" not in result.stdout
     assert "SERVER_ARGS=" not in result.stdout
 
 

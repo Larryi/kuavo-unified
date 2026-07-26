@@ -30,4 +30,4 @@ myenv_lingbot.tar.gz
 
 # Upload checkpoints and completed submissions must never enter the build context.
 .ossutil_checkpoint/
-hjm_kdc_real_task1_lingbot.zip
+hjm_kuavo-lingbot-v1.zip

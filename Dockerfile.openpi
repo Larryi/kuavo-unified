@@ -13,6 +13,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG DEBIAN_FRONTEND=noninteractive
 ARG UBUNTU_MIRROR=https://mirrors.bfsu.edu.cn/ubuntu
 ARG PIP_INDEX_URL=https://mirrors.bfsu.edu.cn/pypi/web/simple
+ARG PYPI_PACKAGE_BASE_URL=https://mirrors.bfsu.edu.cn/pypi/web/packages
 
 ENV UV_LINK_MODE=copy \
     UV_HTTP_RETRIES=5 \
@@ -35,6 +36,16 @@ RUN sed -i "s|http://archive.ubuntu.com/ubuntu|${UBUNTU_MIRROR}|g" /etc/apt/sour
 WORKDIR /root/kuavo_data_challenge/third_party/openpi-kuavo
 COPY --from=openpi_src / /root/kuavo_data_challenge/third_party/openpi-kuavo/
 
+# uv.lock records both the registry and the concrete wheel URLs. Merely setting
+# UV_DEFAULT_INDEX does not redirect frozen files.pythonhosted.org artifacts.
+# Rewrite only the registry hosts in the image-local copy; versions and hashes
+# remain exactly as pinned by the submodule.
+RUN sed -i \
+        -e "s|https://pypi.org/simple|${PIP_INDEX_URL}|g" \
+        -e "s|https://files.pythonhosted.org/packages|${PYPI_PACKAGE_BASE_URL}|g" \
+        uv.lock && \
+    ! grep -Eq 'https://(pypi\\.org/simple|files\\.pythonhosted\\.org/packages)' uv.lock
+
 RUN conda create -p /opt/openpi-python \
         --override-channels \
         -c https://mirrors.bfsu.edu.cn/anaconda/cloud/conda-forge \
@@ -42,7 +53,7 @@ RUN conda create -p /opt/openpi-python \
         python=3.11.9 pip -y && \
     uv venv --python /opt/openpi-python/bin/python "${UV_PROJECT_ENVIRONMENT}"
 
-RUN --mount=type=cache,target=/root/.cache/uv \
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     GIT_LFS_SKIP_SMUDGE=1 uv sync --frozen --no-dev && \
     "${OPENPI_PYTHON}" -c "import transformers; print(transformers.__file__)" | \
         xargs dirname | \

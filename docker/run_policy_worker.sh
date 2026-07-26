@@ -21,7 +21,7 @@ case "${BACKEND}" in
         IMAGE_NAME="${IMAGE_NAME:-kuavo-openpi:latest}"
         ;;
     lingbot)
-        IMAGE_NAME="${IMAGE_NAME:-kdc_real_task1_lingbot:latest}"
+        IMAGE_NAME="${IMAGE_NAME:-kuavo-lingbot-v1:latest}"
         ;;
     lingbot_v2)
         IMAGE_NAME="${IMAGE_NAME:-kuavo-lingbot-v2:latest}"

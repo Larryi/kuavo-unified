@@ -106,7 +106,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         opencv-python-headless==4.12.0.88 \
         numpy==2.2.6 \
         oss2 \
-        requests && \
+        requests \
+        streamlit==1.58.0 && \
     conda clean -afy && \
     rm -rf ./myenv/lib/python*/site-packages/*/tests ./myenv/lib/python*/site-packages/*/test ./myenv/pkgs/*
 
@@ -123,7 +124,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     if [ -d "./third_party/lerobot" ]; then \
         python -m pip install -e ./third_party/lerobot --no-deps --force-reinstall --root-user-action=ignore; \
     fi && \
-    python -c "import lerobot, pathlib; p=pathlib.Path(lerobot.__file__).resolve(); assert str(p).startswith('/root/kuavo_data_challenge/third_party/lerobot/'), p; print('Verified container LeRobot:', p)" && \
+    python -c "import lerobot, pathlib, streamlit; p=pathlib.Path(lerobot.__file__).resolve(); assert str(p).startswith('/root/kuavo_data_challenge/third_party/lerobot/'), p; print('Verified container LeRobot/Viewer:', p, streamlit.__version__)" && \
     chmod -R a+rwX /root/kuavo_data_challenge/kuavo_deploy || true && \
     rm -rf \
         ./myenv/pkgs \

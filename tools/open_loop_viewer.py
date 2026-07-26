@@ -42,25 +42,47 @@ import lerobot.datasets.lerobot_dataset as lerobot_dataset_module
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 
 
-DEFAULT_DATASET_ROOT = (
-    "/mnt/pqssd/Real_PQ_3.0/TASK1_SZ_Repaired/lerobot_task1_345"
+DEFAULT_DATASET_ROOT = os.environ.get(
+    "OPEN_LOOP_DATASET_ROOT",
+    "/mnt/pqssd/Real_PQ_3.0/TASK1_SZ_Repaired/lerobot_task1_345",
 )
-DEFAULT_POLICY_PATH = ""
-DEFAULT_LINGBOT_POLICY_PATH = (
-    "/mnt/pqssd/lingbot_weights/clean_meanstd_fm_L2V2_mb16_gb16_8k_20260623_175250/"
-    "checkpoints/global_step_8000/hf_ckpt"
+DEFAULT_POLICY_PATH = os.environ.get("OPEN_LOOP_POLICY_PATH", "")
+DEFAULT_LINGBOT_POLICY_PATH = os.environ.get(
+    "OPEN_LOOP_POLICY_PATH",
+    (
+        "/mnt/pqssd/lingbot_weights/clean_meanstd_fm_L2V2_mb16_gb16_8k_20260623_175250/"
+        "checkpoints/global_step_8000/hf_ckpt"
+    ),
 )
-DEFAULT_LINGBOT_V2_POLICY_PATH = ""
-DEFAULT_OPENPI_ENDPOINT = "127.0.0.1:8000"
-DEFAULT_LINGBOT_ROOT = "/home/larry/lingbot-vla"
-DEFAULT_QWEN25_PATH = "/home/larry/Qwen2.5_VL"
-DEFAULT_LINGBOT_V2_ROOT = "/home/larry/lingbot-vla-v2"
-DEFAULT_QWEN3VL_PATH = "/mnt/pqssd/pretrained/Qwen3-VL-4B-Instruct"
-DEFAULT_NORM_STATS = "assets/norm_stats/lerobot_trimmed.json"
-DEFAULT_LINGBOT_V2_NORM_STATS = "assets/norm_stats/kuavo_v2_right_arm_meanstd.json"
-DEFAULT_LINGBOT_V2_TASK2_NORM_STATS = "assets/norm_stats/kuavo_v2_bimanual_task2_meanstd.json"
+DEFAULT_LINGBOT_V2_POLICY_PATH = os.environ.get("OPEN_LOOP_POLICY_PATH", "")
+DEFAULT_OPENPI_ENDPOINT = os.environ.get("OPEN_LOOP_OPENPI_ENDPOINT", "127.0.0.1:8000")
+DEFAULT_LINGBOT_ROOT = os.environ.get("OPEN_LOOP_LINGBOT_ROOT", "/home/larry/lingbot-vla")
+DEFAULT_QWEN25_PATH = os.environ.get("OPEN_LOOP_QWEN_PATH", "/home/larry/Qwen2.5_VL")
+DEFAULT_LINGBOT_V2_ROOT = os.environ.get(
+    "OPEN_LOOP_LINGBOT_V2_ROOT", "/home/larry/lingbot-vla-v2"
+)
+DEFAULT_QWEN3VL_PATH = os.environ.get(
+    "OPEN_LOOP_QWEN_PATH", "/mnt/pqssd/pretrained/Qwen3-VL-4B-Instruct"
+)
+DEFAULT_NORM_STATS = os.environ.get(
+    "OPEN_LOOP_NORM_STATS", "assets/norm_stats/lerobot_trimmed.json"
+)
+DEFAULT_LINGBOT_V2_NORM_STATS = os.environ.get(
+    "OPEN_LOOP_NORM_STATS", "assets/norm_stats/kuavo_v2_right_arm_meanstd.json"
+)
+DEFAULT_LINGBOT_V2_TASK2_NORM_STATS = os.environ.get(
+    "OPEN_LOOP_NORM_STATS",
+    "assets/norm_stats/kuavo_v2_bimanual_task2_meanstd.json",
+)
 DEFAULT_LINGBOT_V2_ROBOT_NAME = "kuavo_v2_right_arm"
-DEFAULT_TASK = "Pick and Place the safety belt, cable and pin connector"
+DEFAULT_POLICY_TYPE = os.environ.get("OPEN_LOOP_POLICY_TYPE", "act")
+DEFAULT_ROBOT_NAME = os.environ.get("OPEN_LOOP_ROBOT_NAME", "")
+DEFAULT_REPO_ID = os.environ.get("OPEN_LOOP_REPO_ID", "kuavo/task1_sz")
+DEFAULT_TASK = os.environ.get(
+    "OPEN_LOOP_TASK", "Pick and Place the safety belt, cable and pin connector"
+)
+DEFAULT_STATE_DIM = int(os.environ.get("OPEN_LOOP_STATE_DIM", "8"))
+DEFAULT_ACTION_DIM = int(os.environ.get("OPEN_LOOP_ACTION_DIM", str(DEFAULT_STATE_DIM)))
 
 
 @contextmanager
@@ -475,11 +497,15 @@ def load_model(
     robot_name: str,
     use_compile: bool,
     task: str,
+    state_dim: int,
+    action_dim: int,
 ):
     if policy_type == "openpi":
         return load_openpi_remote_policy(
             policy_path or DEFAULT_OPENPI_ENDPOINT,
             task_prompt=task,
+            state_dim=state_dim,
+            action_dim=action_dim,
         )
     device = torch.device(device_name if torch.cuda.is_available() or not device_name.startswith("cuda") else "cpu")
     policy_kwargs = None
@@ -527,6 +553,8 @@ def load_dataset(
     use_compile: bool,
     task: str,
     video_backend: str,
+    state_dim: int,
+    action_dim: int,
 ):
     policy, _, _ = load_model(
         policy_path,
@@ -538,6 +566,8 @@ def load_dataset(
         robot_name,
         use_compile,
         task,
+        state_dim,
+        action_dim,
     )
     dataset_root_path = Path(dataset_root).expanduser().resolve()
     with local_dataset_only(dataset_root_path):
@@ -767,9 +797,14 @@ def main() -> None:
 
     with st.sidebar:
         dataset_root = st.text_input("Dataset root", DEFAULT_DATASET_ROOT)
-        repo_id = st.text_input("Repo ID", "kuavo/task1_sz")
+        repo_id = st.text_input("Repo ID", DEFAULT_REPO_ID)
+        policy_types = ["act", "diffusion", "lingbot", "lingbot_v2", "openpi"]
         policy_type = st.selectbox(
-            "Policy type", ["act", "diffusion", "lingbot", "lingbot_v2", "openpi"], index=0
+            "Policy type",
+            policy_types,
+            index=policy_types.index(DEFAULT_POLICY_TYPE)
+            if DEFAULT_POLICY_TYPE in policy_types
+            else 0,
         )
         if policy_type == "lingbot":
             default_policy_path = DEFAULT_LINGBOT_POLICY_PATH
@@ -785,6 +820,16 @@ def main() -> None:
             key=f"policy_path_{policy_type}",
         )
         task = st.text_area("Task", DEFAULT_TASK)
+        if policy_type == "openpi":
+            state_dim = int(
+                st.number_input("OpenPI state dimension", min_value=1, value=DEFAULT_STATE_DIM)
+            )
+            action_dim = int(
+                st.number_input("OpenPI action dimension", min_value=1, value=DEFAULT_ACTION_DIM)
+            )
+        else:
+            state_dim = DEFAULT_STATE_DIM
+            action_dim = DEFAULT_ACTION_DIM
         device_options = ["cuda"] if policy_type in {"lingbot", "lingbot_v2"} else ["cuda", "cpu"]
         device = st.selectbox("Device", device_options, index=0)
         video_backend = st.selectbox("Video backend", ["pyav", "torchcodec"], index=0)
@@ -797,18 +842,29 @@ def main() -> None:
                 "Qwen processor path", DEFAULT_QWEN3VL_PATH if is_v2 else DEFAULT_QWEN25_PATH
             )
             if is_v2:
-                v2_preset = st.selectbox("LingBot V2 preset", ["Task1 right arm", "Task2 bimanual", "Custom"], index=0)
+                v2_presets = ["Task1 right arm", "Task2 bimanual", "Custom"]
+                v2_preset = st.selectbox(
+                    "LingBot V2 preset",
+                    v2_presets,
+                    index=1 if DEFAULT_ROBOT_NAME == "kuavo_v2_bimanual" else 0,
+                )
                 if v2_preset == "Task2 bimanual":
                     default_robot_name = "kuavo_v2_bimanual"
                     default_norm_stats = DEFAULT_LINGBOT_V2_TASK2_NORM_STATS
                 else:
-                    default_robot_name = DEFAULT_LINGBOT_V2_ROBOT_NAME
+                    default_robot_name = (
+                        DEFAULT_ROBOT_NAME or DEFAULT_LINGBOT_V2_ROBOT_NAME
+                    )
                     default_norm_stats = DEFAULT_LINGBOT_V2_NORM_STATS
                 robot_name = st.text_input("LingBot V2 robot name", default_robot_name)
                 norm_stats_file = st.text_input("Norm stats file", default_norm_stats)
                 use_compile = st.checkbox("Use torch.compile", value=False)
             else:
-                robot_name = ""
+                robot_name = st.selectbox(
+                    "LingBot V1 robot name",
+                    ["kuavo_v1_right_arm_absolute", "kuavo_v1_right_arm"],
+                    index=1 if DEFAULT_ROBOT_NAME == "kuavo_v1_right_arm" else 0,
+                )
                 norm_stats_file = st.text_input("Norm stats file", DEFAULT_NORM_STATS)
                 use_compile = False
         else:
@@ -848,6 +904,8 @@ def main() -> None:
         robot_name,
         use_compile,
         task,
+        state_dim,
+        action_dim,
     )
     dataset = load_dataset(
         repo_id,
@@ -863,6 +921,8 @@ def main() -> None:
         use_compile,
         task,
         video_backend,
+        state_dim,
+        action_dim,
     )
     max_frame = max(0, len(dataset) - 1)
     action_dim = int(read_raw_gt_chunk(dataset, 0, 1).shape[-1])
