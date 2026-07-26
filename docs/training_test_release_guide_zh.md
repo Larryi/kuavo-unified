@@ -430,6 +430,11 @@ OpenPI 会明确询问总训练步数、warmup 步数、峰值学习率、cosine
 任何具体型号，仍检查 CUDA、GPU 数量和最低显存；仅在用户显式设置
 `REQUIRE_GPU_NAME` 时才限制型号。
 
+OpenPI norm stats 默认使用 `NORM_NUM_WORKERS=0`，避免 TorchCodec/FFmpeg
+等原生解码器在 DataLoader 多进程 worker 中段错误；正式训练仍使用
+`NUM_WORKERS` 并行加载。若手动将 norm workers 调大，失败时流水线会自动
+用单进程重试。
+
 数据配比保存在 `DATASET_MIX_JSON`，例如：
 
 ```json
