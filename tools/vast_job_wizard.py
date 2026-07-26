@@ -140,6 +140,52 @@ def masked_input(prompt: str) -> str:
     return secret.decode("ascii")
 
 
+def positive_int(prompt: str, default: int) -> int:
+    while True:
+        raw = input(f"{prompt} [{default}]: ").strip() or str(default)
+        if raw.isdigit() and int(raw) > 0:
+            return int(raw)
+        print("请输入正整数。")
+
+
+def nonnegative_int(prompt: str, default: int) -> int:
+    while True:
+        raw = input(f"{prompt} [{default}]: ").strip() or str(default)
+        if raw.isdigit():
+            return int(raw)
+        print("请输入非负整数。")
+
+
+def nonnegative_float(prompt: str, default: str) -> str:
+    while True:
+        raw = input(f"{prompt} [{default}]: ").strip() or default
+        try:
+            if float(raw) >= 0:
+                return raw
+        except ValueError:
+            pass
+        print("请输入非负数。")
+
+
+def load_credentials(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    if path.stat().st_mode & 0o077:
+        raise SystemExit(f"凭据文件权限必须为 600 或 400：{path}")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise SystemExit(f"凭据文件格式无效：{path}")
+    return {str(key): str(value) for key, value in payload.items()}
+
+
+def secret_or_saved(prompt: str, key: str, saved: dict[str, str]) -> str:
+    value = saved.get(key, "")
+    if value:
+        print(f"{prompt}：已从持久凭据加载")
+        return value
+    return masked_input(f"{prompt}（以 * 回显）: ").strip()
+
+
 def select_repositories(
     prompt: str,
     available: list[str],
@@ -222,6 +268,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-env", required=True)
     parser.add_argument("--output-manifest", required=True)
+    parser.add_argument("--credentials-file")
     args = parser.parse_args()
 
     try:
@@ -238,7 +285,14 @@ def main() -> int:
     )
     print(f"任务路由：{task} + {algorithm}")
 
-    token = masked_input("HF token（以 * 回显）: ").strip()
+    credentials_path = Path(args.credentials_file) if args.credentials_file else None
+    saved_credentials: dict[str, str] = {}
+    if credentials_path and credentials_path.exists() and yes_no(
+        f"检测到已保存凭据 {credentials_path}，是否复用？", default=True
+    ):
+        saved_credentials = load_credentials(credentials_path)
+
+    token = secret_or_saved("HF token", "HF_TOKEN", saved_credentials)
     if not token:
         raise SystemExit("HF token 不能为空")
     api = HfApi(token=token)
@@ -282,6 +336,10 @@ def main() -> int:
     openpi_resume_from_step: int | None = None
     openpi_resume_additional_steps: int | None = None
     openpi_target_steps: int | None = None
+    openpi_warmup_steps = 1000
+    openpi_peak_lr = "2.5e-5"
+    openpi_decay_steps = 30000
+    openpi_decay_lr = "2.5e-6"
     if yes_no("是否从 HF 完整训练状态继续训练？"):
         resume_repo = select_repositories(
             "选择或输入 resume 模型仓库",
@@ -323,11 +381,27 @@ def main() -> int:
             raise SystemExit("RUN_ID 只能包含字母、数字、点、下划线和连字符")
         resume_mode = "hf"
 
-    wandb_key = masked_input("W&B API key（可留空，以 * 回显）: ").strip()
+    if algorithm == "openpi":
+        if openpi_target_steps is None:
+            openpi_target_steps = positive_int("OpenPI 总训练步数", 30000)
+        openpi_warmup_steps = nonnegative_int("OpenPI LR warmup 步数", 1000)
+        openpi_peak_lr = nonnegative_float("OpenPI 峰值学习率", "2.5e-5")
+        openpi_decay_steps = positive_int(
+            "OpenPI cosine decay 步数", openpi_target_steps
+        )
+        openpi_decay_lr = nonnegative_float("OpenPI 最终学习率", "2.5e-6")
+
+    wandb_key = secret_or_saved(
+        "W&B API key（可留空）", "WANDB_API_KEY", saved_credentials
+    )
     wandb_project = input("W&B project [kuavo-training]: ").strip() or "kuavo-training"
-    serverchan = masked_input("ServerChan SendKey（可留空，以 * 回显）: ").strip()
+    serverchan = secret_or_saved(
+        "ServerChan SendKey（可留空）", "SERVERCHAN_SENDKEY", saved_credentials
+    )
     vast_instance = input("VastAI instance ID（自动关机时必填，可留空）: ").strip()
-    vast_key = masked_input("VastAI API key（自动关机时必填，以 * 回显）: ").strip()
+    vast_key = secret_or_saved(
+        "VastAI API key（自动关机时必填）", "VAST_API_KEY", saved_credentials
+    )
     auto_stop = "1" if vast_instance and vast_key and yes_no("成功后自动关闭 VastAI 实例？", default=True) else "0"
     gpu_ids = input("CUDA GPU IDs [0]: ").strip() or "0"
     if not re.fullmatch(r"\d+(,\d+)*", gpu_ids):
@@ -368,14 +442,20 @@ def main() -> int:
     }
     if algorithm == "openpi":
         values.update({"PIPELINE_MODE": "train", "CONFIRM_FULL_TRAIN": "YES"})
-        if openpi_target_steps is not None:
+        values.update(
+            {
+                "NUM_TRAIN_STEPS": str(openpi_target_steps),
+                "LR_WARMUP_STEPS": str(openpi_warmup_steps),
+                "PEAK_LR": openpi_peak_lr,
+                "LR_DECAY_STEPS": str(openpi_decay_steps),
+                "DECAY_LR": openpi_decay_lr,
+            }
+        )
+        if openpi_resume_from_step is not None:
             values.update(
                 {
-                    "NUM_TRAIN_STEPS": str(openpi_target_steps),
                     "OPENPI_RESUME_FROM_STEP": str(openpi_resume_from_step),
-                    "OPENPI_RESUME_ADDITIONAL_STEPS": str(
-                        openpi_resume_additional_steps
-                    ),
+                    "OPENPI_RESUME_ADDITIONAL_STEPS": str(openpi_resume_additional_steps),
                 }
             )
 
@@ -383,6 +463,23 @@ def main() -> int:
     env_path.parent.mkdir(parents=True, exist_ok=True)
     env_path.write_text(shell_exports(values), encoding="utf-8")
     env_path.chmod(0o600)
+
+    if credentials_path:
+        credentials_path.parent.mkdir(parents=True, exist_ok=True)
+        credentials_path.write_text(
+            json.dumps(
+                {
+                    "HF_TOKEN": token,
+                    "WANDB_API_KEY": wandb_key,
+                    "SERVERCHAN_SENDKEY": serverchan,
+                    "VAST_API_KEY": vast_key,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        credentials_path.chmod(0o600)
 
     manifest = {
         "schema_version": 1,
@@ -399,6 +496,17 @@ def main() -> int:
             "target_total_steps": openpi_target_steps,
         },
         "gpu_ids": gpu_ids,
+        "openpi_training": (
+            {
+                "num_train_steps": openpi_target_steps,
+                "lr_warmup_steps": openpi_warmup_steps,
+                "peak_lr": openpi_peak_lr,
+                "lr_decay_steps": openpi_decay_steps,
+                "decay_lr": openpi_decay_lr,
+            }
+            if algorithm == "openpi"
+            else None
+        ),
         "auto_stop": auto_stop == "1",
         "credentials": {
             "hf": "configured",
@@ -414,6 +522,8 @@ def main() -> int:
         encoding="utf-8",
     )
     print(f"私有环境文件：{env_path}（0600）")
+    if credentials_path:
+        print(f"持久凭据文件：{credentials_path}（0600）")
     print(f"无凭据任务清单：{manifest_path}")
     return 0
 

@@ -99,7 +99,8 @@ scripts/vast/restore_and_launch.sh
    继续”的流程选择多个，然后输入对应比例；
 7. 选择训练输出模型仓库；
 8. 可选选择 resume 模型仓库并检查完整训练状态标记；
-9. 输入 W&B、ServerChan、VastAI 凭据，均以 `*` 回显；
+9. 输入 W&B、ServerChan、VastAI 凭据，均以 `*` 回显；同一实例可复用
+   已保存的 `0600` 凭据；
 10. 生成权限 `0600` 的私有 env 和不含凭据的 JSON 任务清单；
 11. 用户再次确认后才恢复算法环境并启动训练。
 
@@ -107,8 +108,14 @@ scripts/vast/restore_and_launch.sh
 
 ```text
 .secrets/interactive-job.env       # 包含凭据，0600，不可提交
+.secrets/vast-credentials.json     # 可复用凭据，0600，不可提交
 logs/interactive-job.json          # 不含凭据，可用于审核
 ```
+
+OpenPI 向导会询问总训练步数、warmup、峰值 LR、cosine decay 步数和
+最终 LR；默认依次为 `30000`、`1000`、`2.5e-5`、`30000`、
+`2.5e-6`。GPU 预检默认不要求 A100，只检查 CUDA、GPU 数量和最低显存；
+`REQUIRE_GPU_NAME` 仅作为可选的显式约束。
 
 HF token 至少需要：
 

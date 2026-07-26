@@ -29,6 +29,14 @@ JOB_LAUNCHER = ROOT / "scripts" / "vast" / "launch_job.sh"
 STATUS = ROOT / "scripts" / "vast" / "status.sh"
 BOOTSTRAP = ROOT / "scripts" / "vast" / "bootstrap_from_ssh"
 RESTORE = ROOT / "scripts" / "vast" / "restore_and_launch.sh"
+OPENPI_PIPELINE = (
+    ROOT
+    / "third_party"
+    / "openpi-kuavo"
+    / "scripts"
+    / "vast"
+    / "run_pi05_pipeline.sh"
+)
 
 
 @pytest.mark.parametrize(
@@ -227,6 +235,20 @@ def test_lingbot_v2_cloud_job_dry_run_is_available() -> None:
 def test_vla_algorithms_are_routed_to_task1_and_task2() -> None:
     for algorithm in ("openpi", "lingbot-v1", "lingbot-v2"):
         assert JOB_MATRIX[algorithm] == ("task1", "task2")
+
+
+def test_openpi_pipeline_has_no_default_gpu_model_lock() -> None:
+    text = OPENPI_PIPELINE.read_text(encoding="utf-8")
+    assert ': "${REQUIRE_GPU_NAME:=}"' in text
+    assert ': "${REQUIRE_GPU_NAME:=A100}"' not in text
+    assert '--lr-schedule.peak-lr "${PEAK_LR}"' in text
+    assert '--lr-schedule.decay-steps "${LR_DECAY_STEPS}"' in text
+
+
+def test_restore_passes_persistent_credentials_file() -> None:
+    text = RESTORE.read_text(encoding="utf-8")
+    assert ".secrets/vast-credentials.json" in text
+    assert '--credentials-file "${CREDENTIALS_FILE}"' in text
 
 
 def test_job_launcher_dry_run_describes_resume_without_network() -> None:

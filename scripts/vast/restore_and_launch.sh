@@ -6,6 +6,7 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 : "${VAST_BOOTSTRAP_ROOT:=/workspace/kuavo_bootstrap}"
 : "${JOB_ENV:=${ROOT}/.secrets/interactive-job.env}"
 : "${JOB_MANIFEST:=${ROOT}/logs/interactive-job.json}"
+: "${CREDENTIALS_FILE:=${ROOT}/.secrets/vast-credentials.json}"
 : "${PIP_INDEX_URL:=https://pypi.org/simple}"
 
 command -v python3 >/dev/null || {
@@ -23,7 +24,8 @@ fi
 export VAST_BOOTSTRAP_PYTHON="${VAST_BOOTSTRAP_ROOT}/bin/python"
 "${VAST_BOOTSTRAP_PYTHON}" "${ROOT}/tools/vast_job_wizard.py" \
   --output-env "${JOB_ENV}" \
-  --output-manifest "${JOB_MANIFEST}"
+  --output-manifest "${JOB_MANIFEST}" \
+  --credentials-file "${CREDENTIALS_FILE}"
 
 echo "即将使用以下无凭据配置："
 "${VAST_BOOTSTRAP_PYTHON}" -m json.tool "${JOB_MANIFEST}"

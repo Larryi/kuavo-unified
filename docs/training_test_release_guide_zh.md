@@ -419,8 +419,16 @@ bash scripts/vast/restore_and_launch.sh
 5. 选择或输入本次训练输出的 HF model repo；
 6. 选择是否从完整训练状态 resume；
 7. 输入可选的 W&B、ServerChan、VastAI 凭据，秘密同样以 `*` 回显；
+   同一实例和工作目录再次运行时可复用已保存的 `0600` 凭据；
 8. 选择 GPU ID，例如单卡 `0` 或多卡 `0,1`；
 9. 审核不含凭据的任务清单，再确认环境恢复和训练启动。
+
+OpenPI 会明确询问总训练步数、warmup 步数、峰值学习率、cosine decay
+步数和最终学习率。当前默认值依次为
+`30000 / 1000 / 2.5e-5 / 30000 / 2.5e-6`。续训时总步数按
+“已完成 step + 用户输入的追加步数”计算。GPU 预检默认不限定 A100 或
+任何具体型号，仍检查 CUDA、GPU 数量和最低显存；仅在用户显式设置
+`REQUIRE_GPU_NAME` 时才限制型号。
 
 数据配比保存在 `DATASET_MIX_JSON`，例如：
 
@@ -439,7 +447,10 @@ HF token 至少要有：读取所选私有 dataset、读取所需基模/resume �
 
 ```text
 /workspace/kuavo_unified_stack/.secrets/interactive-job.env  # mode 0600
+/workspace/kuavo_unified_stack/.secrets/vast-credentials.json # 可复用，mode 0600
 ```
+
+凭据只在当前 VastAI 实例/持久卷中保存；实例销毁且未挂载持久卷后不会保留。
 
 无凭据审核清单写入：
 
