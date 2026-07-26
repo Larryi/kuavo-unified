@@ -394,16 +394,25 @@ upload_directory() {
   UPLOAD_STATUS="success"
 }
 
+run_directory_name() {
+  local run_id="$1"
+  if [[ "${run_id}" == run_* ]]; then
+    printf '%s' "${run_id}"
+  else
+    printf 'run_%s' "${run_id}"
+  fi
+}
+
 run_classic() {
   local config_name task_name method_name output_base run_dir
   config_name="${TRAIN_CONFIG_NAME:-$([[ "${MODEL_BACKEND}" == "dp" ]] && echo dp_r1.yaml || echo act_config.yaml)}"
   task_name="${TASK_NAME:-r1}"
   method_name="${METHOD_NAME:-${MODEL_BACKEND}_cloud}"
   output_base="${WORK_ROOT}/outputs/${MODEL_BACKEND}"
-  run_dir="${output_base}/run_${RUN_ID}"
+  run_dir="${output_base}/$(run_directory_name "${RUN_ID}")"
   resolve_dataset_mixture
   if [[ "${RESUME_MODE}" == "hf" ]]; then
-    run_dir="${output_base}/run_${RESUME_RUN_ID}"
+    run_dir="${output_base}/$(run_directory_name "${RESUME_RUN_ID}")"
     download_resume "${run_dir}"
   fi
   set_phase "train ${MODEL_BACKEND}"
@@ -446,7 +455,7 @@ run_lingbot_v2() {
   qwen_root="${WORK_ROOT}/models/Qwen3-VL-4B-Instruct"
   moge_root="${WORK_ROOT}/models/moge-2-vitb-normal"
   output_base="${WORK_ROOT}/outputs/lingbot_v2"
-  run_dir="${output_base}/run_${RUN_ID}"
+  run_dir="${output_base}/$(run_directory_name "${RUN_ID}")"
   resolve_dataset_mixture
   PIPELINE_PHASE="download LingBot-v2 assets"
   download_hf "${LINGBOT_V2_MODEL_REPO:-robbyant/lingbot-vla-v2-6b}" "${model_root}"
@@ -471,7 +480,7 @@ run_lingbot_v2() {
     }
   done
   if [[ "${RESUME_MODE}" == "hf" ]]; then
-    run_dir="${output_base}/run_${RESUME_RUN_ID}"
+    run_dir="${output_base}/$(run_directory_name "${RESUME_RUN_ID}")"
     download_resume "${run_dir}"
   fi
   PIPELINE_PHASE="compute LingBot-v2 normalization"

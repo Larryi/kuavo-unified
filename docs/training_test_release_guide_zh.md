@@ -74,15 +74,37 @@ YAML 和 manifest 是多个层，但通常 checkpoint 层占绝大部分。
 
 因此日常测试不要生成 TAR。只有正式离线交付才使用 `--save-tar`。
 
-## 2. 已支持任务矩阵
+## 2. 已支持任务矩阵与边界
 
-| task | algorithm | 动作/机器人 |
-|---|---|---|
-| Task1 | OpenPI | 右臂 7D + 单夹爪，共 8D |
-| Task1 | LingBot-v1 | 右臂 7D + 单夹爪，共 8D |
-| Task2 | DP | 双臂 14D + 双夹爪，共 16D |
-| Task2 | LingBot-v2 | 双臂 14D + 双夹爪，共 16D，三相机 |
-| Task3 | ACT | 右臂 + Qiangnao 末端 |
+当前支持的是下面 5 条固定路由，不是“任意算法 × 任意任务”的笛卡尔积：
+
+| task | algorithm | 全新微调 | 完整状态续训 | 同构数据集配比 | 动作/机器人 |
+|---|---|---:|---:|---:|---|
+| Task1 | OpenPI | 支持 | 支持 | 支持 | 右臂 7D + 单夹爪，共 8D |
+| Task1 | LingBot-v1 | 支持 | 支持 | 支持 | 右臂 7D + 单夹爪，共 8D |
+| Task2 | DP | 支持 | 支持 | 支持 | 双臂 14D + 双夹爪，共 16D |
+| Task2 | LingBot-v2 | 支持 | 支持 | 支持 | 双臂 14D + 双夹爪，共 16D，三相机 |
+| Task3 | ACT | 支持 | 支持 | 支持 | 右臂 + Qiangnao 末端 |
+
+这里的“全新微调”是建立一个新的任务训练 run。OpenPI 和 LingBot 系列仍会
+加载各自基础模型；它不是从随机参数预训练 VLA 基模。DP/ACT 按各自配置
+初始化策略，ACT 仍使用 ResNet18 ImageNet 公共预训练权重。
+
+“任意任务”目前不成立。例如 Task1+ACT、Task2+OpenPI、Task3+LingBot
+尚无经过审核的 VastAI profile。要增加组合，至少需要补齐并验证：
+
+- 任务的 state/action 维度、手臂和末端映射；
+- 相机键、FPS、LeRobot feature schema 与任务文本；
+- 算法 data adapter、robot config 和匹配的 norm 计算；
+- 基模/processor 下载清单、训练配置、resume 目录约定；
+- open-loop 与 ROS 部署 YAML。
+
+不能只在命令行交换 `--task` 和 `--algorithm`。`job_profile.sh` 与远端向导
+会主动拒绝未列入上表的组合，避免训练出维度错误但表面可运行的模型。
+
+多数据集配比也不是把不同任务任意混合。一次 run 中的所有源必须属于同一
+任务路由，并具有相同机器人 embodiment、state/action/camera schema、
+FPS 和 LeRobot 版本；向导会归一化权重，远端下载后再次校验。
 
 当前数据集：
 
@@ -279,34 +301,180 @@ Qwen processor/tokenizer、robot config 与 norm stats。
 
 ## 5. 多数据集混合与 VastAI
 
-推荐入口：
+### 5.1 VastAI 实例和本地仓库前提
+
+推荐让新实例从 Git 恢复源码，而不是 rsync 整个本地工作树。开始前确认：
+
+```bash
+git status --short
+git rev-list --left-right --count personal/codex/unified-stack...HEAD
+git submodule status --recursive
+```
+
+第一条应无输出，第二条应为 `0 0`，submodule 行首不应出现 `-`、`+` 或
+`U`。VastAI 基础实例至少需要 NVIDIA 驱动、`git`、`python3`、SSH 服务和
+足够的数据集/模型/训练状态磁盘空间。算法环境由远端流水线恢复；远端
+Python 包默认使用官方 `https://pypi.org/simple`，不使用 BFSU。
+
+VastAI 页面通常提供类似命令：
+
+```text
+ssh -p 12345 root@1.2.3.4 -L 8080:localhost:8080
+```
+
+本地先做不联网、不上传的命令预览：
 
 ```bash
 scripts/vast/bootstrap_from_ssh \
-  --ssh-command 'ssh -p 12345 root@1.2.3.4 -L 8080:localhost:8080'
+  --ssh-command 'ssh -p 12345 root@1.2.3.4 -L 8080:localhost:8080' \
+  --repo-url https://github.com/Larryi/kuavo-unified.git \
+  --git-ref codex/unified-stack \
+  --dry-run
 ```
 
-新实例默认只上传小型恢复脚本，远端从 Git clone 主仓库并按固定 commit
-恢复 submodule。仅当远端不能访问 Git 或本地修改尚未推送时，才显式使用
-`--sync-working-tree`。
+确认后去掉 `--dry-run`：
 
-远端 `restore_and_launch.sh` 会：
+```bash
+scripts/vast/bootstrap_from_ssh \
+  --ssh-command 'ssh -p 12345 root@1.2.3.4 -L 8080:localhost:8080' \
+  --repo-url https://github.com/Larryi/kuavo-unified.git \
+  --git-ref codex/unified-stack
+```
 
-1. 以星号输入并验证 HF token；
-2. 选择一个或多个 HF dataset；
-3. 为每个数据集设置正比例；
-4. 选择算法、输出模型仓库与可选 resume 仓库；
-5. 下载对应基模和 tokenizer/processor；
-6. 设置 W&B、ServerChan、VastAI 凭据；
-7. 写入权限 `0600` 的私有 env；
-8. 运行训练、上传、通知；
-9. 仅在成功且明确配置后停止 VastAI 实例。
+脚本只 rsync 一个小型 `remote_clone_and_restore.sh` 到 `/tmp`，然后远端：
 
-混合数据保存在 `DATASET_MIX_JSON`。五类算法都按同一加权采样分布训练并
-重新计算匹配 norm。只有同任务、同 state/action/camera schema 的数据集
-可以混合。
+1. clone `codex/unified-stack` 到 `/workspace/kuavo_unified_stack`；
+2. 按主仓库固定 SHA 执行递归 submodule 初始化；
+3. 写出 `.vast_git_manifest.json`，记录主仓库和全部 submodule commit；
+4. 进入 `scripts/vast/restore_and_launch.sh` 交互向导。
 
-非交互启动示例：
+本地入口会先验证当前 HEAD 已推送，并验证每个 submodule SHA 能从配置的
+fork 获取。正常新实例不要传 `--sync-working-tree`；该参数只用于远端
+无法访问 Git 或明确需要测试尚未提交改动的应急场景。
+
+如果只想恢复代码、暂不配置训练：
+
+```bash
+scripts/vast/bootstrap_from_ssh \
+  --ssh-command 'ssh -p 12345 root@1.2.3.4' \
+  --repo-url https://github.com/Larryi/kuavo-unified.git \
+  --git-ref codex/unified-stack \
+  --no-launch
+```
+
+之后登录远端手工进入向导：
+
+```bash
+cd /workspace/kuavo_unified_stack
+bash scripts/vast/restore_and_launch.sh
+```
+
+### 5.2 交互向导：新训练、多数据集与凭据
+
+向导依次完成：
+
+1. 选择算法；任务按第 2 节矩阵自动绑定，不能选择未支持组合；
+2. 输入 HF token，终端每个字符回显为 `*`，并通过 `whoami` 验证；
+3. 从 HF 用户/组织仓库选择一个或多个同构 LeRobot dataset；
+4. 逐个添加数据集并输入正比例，例如 `25,75`；
+5. 选择或输入本次训练输出的 HF model repo；
+6. 选择是否从完整训练状态 resume；
+7. 输入可选的 W&B、ServerChan、VastAI 凭据，秘密同样以 `*` 回显；
+8. 选择 GPU ID，例如单卡 `0` 或多卡 `0,1`；
+9. 审核不含凭据的任务清单，再确认环境恢复和训练启动。
+
+数据配比保存在 `DATASET_MIX_JSON`，例如：
+
+```json
+[
+  {"name":"source_01_task1_sz","repo_id":"owner/task1_sz","weight":0.25},
+  {"name":"source_02_task1_bj","repo_id":"owner/task1_bj","weight":0.75}
+]
+```
+
+远端逐个下载数据集、验证 schema，再生成带本地路径的 resolved manifest。
+五条已支持路由都使用该加权采样分布，并按相同分布计算或合并 norm。
+
+HF token 至少要有：读取所选私有 dataset、读取所需基模/resume 仓库，以及
+创建或写入输出 model repo 的权限。私密配置写入：
+
+```text
+/workspace/kuavo_unified_stack/.secrets/interactive-job.env  # mode 0600
+```
+
+无凭据审核清单写入：
+
+```text
+/workspace/kuavo_unified_stack/logs/interactive-job.json
+```
+
+### 5.3 从头开始一个新 run
+
+在“是否从 HF 完整训练状态继续训练？”处选择 `n`。随后输入新的 `RUN_ID`
+或留空自动生成。流水线会按算法自动准备：
+
+- DP/ACT：训练环境及 ResNet18 公共权重；
+- OpenPI：Pi0.5 base params 与 PaliGemma tokenizer；
+- LingBot-v1：LingBot-VLA 基模与 Qwen2.5-VL processor；
+- LingBot-v2：6B 基模、Qwen3-VL、MoGe、Depth 与 DINO teacher。
+
+这会创建新的任务微调 run；VLA 算法不会从随机权重训练基础模型。
+
+### 5.4 从完整状态接续训练
+
+在 resume 问题处选择 `y`，再选择 HF model repo 并输入原始 `RUN_ID`。
+仓库必须包含对应 trainer 的完整状态：
+
+| algorithm | 至少需要的状态标记 |
+|---|---|
+| OpenPI | step 目录中的 `params/_METADATA` 及优化器等 Orbax 状态 |
+| LingBot-v1 | `checkpoints/global_step_*` 完整 DCP |
+| LingBot-v2 | `checkpoints/global_step_*` 完整 DCP/训练状态 |
+| DP/ACT | `learning_state.pth`、RNG、processor；Accelerate 还需 `epochlatest/` 和 `training_latest_state.pth` |
+
+只有部署用 `hf_ckpt`、`model.safetensors`、`epochbest` 或 OpenPI 的
+`params` 子目录不足以无损续训。向导先检查 HF 文件清单，再把完整 run
+恢复到训练器预期目录；续训仍可把结果上传到另一个 `MODEL_REPO`。
+
+### 5.5 启动确认、状态、通知与关机
+
+向导展示 `interactive-job.json` 后询问：
+
+```text
+确认恢复算法环境并启动训练？ [y/N]
+```
+
+选择 `n` 会保留配置但不训练。之后可在远端启动：
+
+```bash
+cd /workspace/kuavo_unified_stack
+set -a
+source .secrets/interactive-job.env
+set +a
+bash scripts/vast/run_backend.sh
+```
+
+作业状态持续原子写入：
+
+```text
+/workspace/kuavo_runs/<backend>/logs/<run-id>/status.json
+```
+
+从本地查看一次有限日志尾部和 GPU 状态：
+
+```bash
+TRAINING_TASK=task2 MODEL_BACKEND=lingbot-v2 \
+VAST_SSH_HOST=1.2.3.4 VAST_SSH_PORT=12345 \
+scripts/vast/status.sh
+```
+
+持续查看可加 `WATCH_SECONDS=30`；脚本默认只读取末尾 30 行，不下载完整滚动
+日志。ServerChan 留空即禁用；配置后成功和失败都会通知。只有同时提供
+`VAST_INSTANCE_ID`、`VAST_API_KEY`，并确认自动关机时，成功上传后才停止
+实例。失败默认不关机，保留现场和 checkpoint 供排查。
+
+`scripts/vast/launch_job.sh` 是已有私有 env 文件时的非交互/自动化入口，
+会同步工作树，正常新实例优先使用上述 Git bootstrap。示例：
 
 ```bash
 scripts/vast/launch_job.sh \
@@ -315,14 +483,6 @@ scripts/vast/launch_job.sh \
   --env-file /secure/task2-lingbot-v2.env \
   --host 1.2.3.4 \
   --port 12345
-```
-
-有限日志和 GPU 状态：
-
-```bash
-TRAINING_TASK=task2 MODEL_BACKEND=lingbot-v2 \
-VAST_SSH_HOST=1.2.3.4 VAST_SSH_PORT=12345 \
-scripts/vast/status.sh
 ```
 
 ## 6. 无 ROS open-loop

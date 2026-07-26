@@ -242,6 +242,13 @@ def test_job_launcher_dry_run_describes_resume_without_network() -> None:
     assert "SSH, rsync, secret upload, and remote execution were skipped" in result.stdout
 
 
+def test_resume_run_directory_does_not_double_prefix_run_id() -> None:
+    text = REMOTE_RUNNER.read_text(encoding="utf-8")
+    assert "run_directory_name()" in text
+    assert 'run_dir="${output_base}/$(run_directory_name "${RESUME_RUN_ID}")"' in text
+    assert 'run_dir="${output_base}/run_${RESUME_RUN_ID}"' not in text
+
+
 def test_status_reader_is_bounded_and_reports_gpu() -> None:
     text = STATUS.read_text(encoding="utf-8")
     assert 'TAIL_LINES:=30' in text
@@ -350,7 +357,12 @@ def test_resume_repository_state_detection(
 
 @pytest.mark.parametrize(
     ("backend", "task"),
-    [("dp", "task2"), ("act", "task3"), ("lingbot-v1", "task1")],
+    [
+        ("dp", "task2"),
+        ("act", "task3"),
+        ("lingbot-v1", "task1"),
+        ("lingbot-v2", "task2"),
+    ],
 )
 def test_remote_runner_accepts_weighted_mix_for_supported_backends(
     backend: str, task: str
