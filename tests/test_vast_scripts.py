@@ -490,6 +490,13 @@ def test_restore_uses_official_pypi_and_private_env() -> None:
     assert "mirrors.bfsu.edu.cn" not in text
     assert "umask 077" in text
     assert "vast_job_wizard.py" in text
+    assert 'VAST_PYPI_INDEX:=https://pypi.org/simple' in text
+    runner = REMOTE_RUNNER.read_text(encoding="utf-8")
+    assert 'PIP_INDEX_URL="${VAST_PYPI_INDEX}"' in runner
+    assert "unset PIP_EXTRA_INDEX_URL UV_INDEX_URL UV_EXTRA_INDEX_URL" in runner
+    pipeline = OPENPI_PIPELINE.read_text(encoding="utf-8")
+    assert "mirrors.bfsu.edu.cn" not in pipeline
+    assert ': "${VAST_PYPI_INDEX:=https://pypi.org/simple}"' in pipeline
 
 
 def test_secret_reader_echoes_asterisks() -> None:

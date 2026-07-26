@@ -437,8 +437,7 @@ def main() -> int:
         "GPU_COUNT": gpu_count,
         "RUN_ID": run_id,
         "PREPARE_ENV": "1",
-        "UV_DEFAULT_INDEX": "https://pypi.org/simple",
-        "PIP_INDEX_URL": "https://pypi.org/simple",
+        "VAST_PYPI_INDEX": "https://pypi.org/simple",
     }
     if algorithm == "openpi":
         values.update({"PIPELINE_MODE": "train", "CONFIRM_FULL_TRAIN": "YES"})

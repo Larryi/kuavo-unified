@@ -352,7 +352,10 @@ git submodule status --recursive
 第一条应无输出，第二条应为 `0 0`，submodule 行首不应出现 `-`、`+` 或
 `U`。VastAI 基础实例至少需要 NVIDIA 驱动、`git`、`python3`、SSH 服务和
 足够的数据集/模型/训练状态磁盘空间。算法环境由远端流水线恢复；远端
-Python 包默认使用官方 `https://pypi.org/simple`，不使用 BFSU。
+Python 包由 `VAST_PYPI_INDEX` 控制，默认强制使用官方
+`https://pypi.org/simple`。远端入口会覆盖基础镜像或旧 shell 遗留的
+`PIP_INDEX_URL`/`UV_DEFAULT_INDEX`，并清除 extra-index；BFSU 仅用于本地
+Docker 构建。只有显式设置 `VAST_PYPI_INDEX` 才会改变云端源。
 
 VastAI 页面通常提供类似命令：
 

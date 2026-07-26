@@ -7,7 +7,10 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 : "${JOB_ENV:=${ROOT}/.secrets/interactive-job.env}"
 : "${JOB_MANIFEST:=${ROOT}/logs/interactive-job.json}"
 : "${CREDENTIALS_FILE:=${ROOT}/.secrets/vast-credentials.json}"
-: "${PIP_INDEX_URL:=https://pypi.org/simple}"
+: "${VAST_PYPI_INDEX:=https://pypi.org/simple}"
+export PIP_INDEX_URL="${VAST_PYPI_INDEX}"
+export UV_DEFAULT_INDEX="${VAST_PYPI_INDEX}"
+unset PIP_EXTRA_INDEX_URL UV_INDEX_URL UV_EXTRA_INDEX_URL
 
 command -v python3 >/dev/null || {
   echo "python3 is required in the VastAI base image." >&2
@@ -18,7 +21,7 @@ if [[ ! -x "${VAST_BOOTSTRAP_ROOT}/bin/python" ]]; then
   python3 -m venv "${VAST_BOOTSTRAP_ROOT}"
 fi
 "${VAST_BOOTSTRAP_ROOT}/bin/python" -m pip install \
-  --index-url "${PIP_INDEX_URL}" \
+  --index-url "${VAST_PYPI_INDEX}" \
   --upgrade pip huggingface_hub
 
 export VAST_BOOTSTRAP_PYTHON="${VAST_BOOTSTRAP_ROOT}/bin/python"

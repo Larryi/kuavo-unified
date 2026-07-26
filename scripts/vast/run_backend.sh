@@ -28,6 +28,11 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 : "${RESUME_REPO:=}"
 : "${RESUME_RUN_ID:=}"
 : "${DATASET_MIX_JSON:=}"
+: "${VAST_PYPI_INDEX:=https://pypi.org/simple}"
+
+export PIP_INDEX_URL="${VAST_PYPI_INDEX}"
+export UV_DEFAULT_INDEX="${VAST_PYPI_INDEX}"
+unset PIP_EXTRA_INDEX_URL UV_INDEX_URL UV_EXTRA_INDEX_URL
 
 case "${MODEL_BACKEND}" in
   dp|act|openpi|lingbot-v1|lingbot-v2) ;;
