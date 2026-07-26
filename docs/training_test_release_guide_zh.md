@@ -533,6 +533,12 @@ OpenPI 恢复 optimizer、全局 step 和其他完整状态后，不会再次 wa
 只有部署用 `hf_ckpt`、`model.safetensors`、`epochbest` 或 OpenPI 的
 `params` 子目录不足以无损续训。向导先检查 HF 文件清单，再把完整 run
 恢复到训练器预期目录；续训仍可把结果上传到另一个 `MODEL_REPO`。
+OpenPI resume 先下载到 `<run>.hf-download` staging 目录，并只在
+`snapshot_download` 全部成功后写入 `.kuavo_hf_resume_complete`、原子替换
+正式 run 目录。下载被中断后再次启动会继续 staging 下载，不会再把仅存在
+数字 step 目录的残缺 checkpoint 当成完整状态。HF 的文件计数可能在传输
+单个大型 Orbax 分片时长时间不变，可观察 staging 目录总大小是否仍在增长，
+不要仅凭 `9/39` 判断死锁。
 模型输出仓库默认创建/设置为公开；确需私有时可在生成的 env 中显式设置
 `MODEL_REPO_PRIVATE=1`。上传 checkpoint 时会排除本地
 `.cache/huggingface/**` 元数据，避免 `upload_large_folder` 递归读取自身

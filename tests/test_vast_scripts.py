@@ -327,6 +327,9 @@ def test_openpi_resume_uses_checkpoint_wandb_id_and_lr_tail() -> None:
     assert "shutil.rmtree(upload_cache)" in pipeline_text
     assert "Primary training failure (last 80 log lines)" in pipeline_text
     assert "skipping fallback upload" in pipeline_text
+    assert 'resume_staging_dir="${run_dir}.hf-download"' in pipeline_text
+    assert ".kuavo_hf_resume_complete" in pipeline_text
+    assert "staging.replace(run_dir)" in pipeline_text
     assert ': "${MODEL_REPO_PRIVATE:=0}"' in pipeline_text
 
 
