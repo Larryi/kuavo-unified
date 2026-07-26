@@ -243,6 +243,9 @@ def test_openpi_pipeline_has_no_default_gpu_model_lock() -> None:
     assert ': "${REQUIRE_GPU_NAME:=A100}"' not in text
     assert ': "${CUDA_NVCC_VERSION:=auto}"' in text
     assert ': "${NORM_NUM_WORKERS:=0}"' in text
+    assert ': "${NUM_WORKERS:=0}"' in text
+    assert ': "${TRAIN_VIDEO_BACKEND:=torchcodec}"' in text
+    assert "ALLOW_UNSAFE_VIDEO_WORKERS" in text
     assert "Parallel norm-stat loading failed" in text
     assert "--state-action-only" in text
     assert "Reused OpenPI norm cache" in text

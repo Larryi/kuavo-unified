@@ -450,6 +450,14 @@ Parquet 到写出 norm 共约 13 秒；旧的逐帧视频路径仅 128 frames �
 10 秒。实际 VastAI 时间会受远端磁盘影响，但不应再出现数小时的
 `Computing stats` 视频解码进度。
 
+OpenPI 训练阶段默认使用 `TRAIN_VIDEO_BACKEND=torchcodec` 与
+`NUM_WORKERS=0`。这是因为当前锁定的 TorchCodec 0.4.0 在 spawned
+DataLoader worker 中出现过原生 `SIGSEGV`，而主进程解码已用真实 Task2
+三相机样本验证。当前 torchvision 构建不提供 `VideoReader`，因此不能把
+`pyav` 当作可用的默认替代。若要实验并行解码，必须同时显式设置
+`NUM_WORKERS>0` 和 `ALLOW_UNSAFE_VIDEO_WORKERS=1`；否则流水线会回退到
+0 workers，避免在 checkpoint 前随机丢失训练进度。
+
 数据配比保存在 `DATASET_MIX_JSON`，例如：
 
 ```json
