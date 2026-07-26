@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -7,6 +8,15 @@ import subprocess
 import pytest
 
 from kuavo_train.train_lingbot_v2 import _optional_asset_args
+from tools.vast_bootstrap import (
+    BootstrapError,
+    options_without_forwarding,
+    parse_ssh_command,
+)
+from tools.vast_job_wizard import (
+    normalize_dataset_mix,
+    resume_repo_has_training_state,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +24,8 @@ LAUNCHER = ROOT / "scripts" / "vast" / "launch.sh"
 REMOTE_RUNNER = ROOT / "scripts" / "vast" / "run_backend.sh"
 JOB_LAUNCHER = ROOT / "scripts" / "vast" / "launch_job.sh"
 STATUS = ROOT / "scripts" / "vast" / "status.sh"
+BOOTSTRAP = ROOT / "scripts" / "vast" / "bootstrap_from_ssh"
+RESTORE = ROOT / "scripts" / "vast" / "restore_and_launch.sh"
 
 
 @pytest.mark.parametrize(
@@ -234,6 +246,153 @@ def test_status_reader_is_bounded_and_reports_gpu() -> None:
     assert 'tail -n "${tail_lines}"' in text
     assert "nvidia-smi --query-gpu=" in text
     assert "cat \"${status_file}\"" in text
+
+
+def test_ssh_parser_accepts_forwarding_after_target() -> None:
+    options, target = parse_ssh_command(
+        "ssh -p 12345 root@1.2.3.4 -L 8080:localhost:8080"
+    )
+    assert target == "root@1.2.3.4"
+    assert options == ["-p", "12345", "-L", "8080:localhost:8080"]
+    assert options_without_forwarding(options) == ["-p", "12345"]
+
+
+def test_ssh_parser_rejects_remote_command() -> None:
+    with pytest.raises(BootstrapError, match="Remote shell commands"):
+        parse_ssh_command("ssh root@example.invalid rm -rf /tmp/example")
+
+
+def test_bootstrap_dry_run_uploads_only_remote_git_script() -> None:
+    result = subprocess.run(
+        [
+            str(BOOTSTRAP),
+            "--ssh-command",
+            "ssh -p 12345 root@1.2.3.4 -L 8080:localhost:8080",
+            "--dry-run",
+            "--no-launch",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "remote_clone_and_restore.sh" in result.stdout
+    assert "--repo-url https://github.com/Larryi/kuavo-unified.git" in result.stdout
+    assert "--git-ref codex/unified-stack" in result.stdout
+    assert "Git publication preflight skipped in dry-run mode" in result.stdout
+    assert "--exclude .git" not in result.stdout
+    assert f"{ROOT}/ root@1.2.3.4:" not in result.stdout
+    assert "all pinned submodules" in result.stdout
+
+
+def test_bootstrap_worktree_sync_is_explicit_fallback() -> None:
+    result = subprocess.run(
+        [
+            str(BOOTSTRAP),
+            "--ssh-command",
+            "ssh -p 12345 root@1.2.3.4",
+            "--sync-working-tree",
+            "--dry-run",
+            "--no-launch",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Explicit fallback enabled" in result.stdout
+    assert "--exclude .git" in result.stdout
+    assert ".vast_sync_manifest.json" in result.stdout
+
+
+def test_dataset_mix_normalizes_weights() -> None:
+    mixture = normalize_dataset_mix(
+        ["owner/task1-sz", "owner/task1-bj"],
+        [25, 75],
+    )
+    assert [item.weight for item in mixture] == [0.25, 0.75]
+    assert [item.repo_id for item in mixture] == [
+        "owner/task1-sz",
+        "owner/task1-bj",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("algorithm", "files", "expected"),
+    [
+        ("openpi", ["10000/params/_METADATA"], True),
+        ("lingbot-v1", ["checkpoints/global_step_15000/.metadata"], True),
+        ("dp", ["learning_state.pth"], True),
+        ("act", ["model.safetensors"], False),
+    ],
+)
+def test_resume_repository_state_detection(
+    algorithm: str,
+    files: list[str],
+    expected: bool,
+) -> None:
+    assert resume_repo_has_training_state(algorithm, files) is expected
+
+
+def test_remote_runner_rejects_weighted_mix_for_classic_before_network() -> None:
+    mixture = json.dumps(
+        [
+            {"repo_id": "owner/a", "weight": 0.5},
+            {"repo_id": "owner/b", "weight": 0.5},
+        ]
+    )
+    result = subprocess.run(
+        [str(REMOTE_RUNNER)],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "MODEL_BACKEND": "dp",
+            "TRAINING_TASK": "task2",
+            "DATASET_MIX_JSON": mixture,
+            "DRY_RUN": "1",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "weighted virtual mixtures are supported by OpenPI" in result.stderr
+
+
+def test_remote_runner_accepts_weighted_mix_for_openpi_dry_run() -> None:
+    mixture = json.dumps(
+        [
+            {"repo_id": "owner/task1-sz", "weight": 25},
+            {"repo_id": "owner/task1-bj", "weight": 75},
+        ]
+    )
+    result = subprocess.run(
+        [str(REMOTE_RUNNER)],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "MODEL_BACKEND": "openpi",
+            "TRAINING_TASK": "task1",
+            "DATASET_MIX_JSON": mixture,
+            "DRY_RUN": "1",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Datasets: 2" in result.stdout
+    assert "no network" in result.stdout
+
+
+def test_restore_uses_official_pypi_and_private_env() -> None:
+    text = RESTORE.read_text(encoding="utf-8")
+    assert "https://pypi.org/simple" in text
+    assert "mirrors.bfsu.edu.cn" not in text
+    assert "umask 077" in text
+    assert "vast_job_wizard.py" in text
 
 
 def test_lingbot_v2_cloud_assets_override_developer_paths() -> None:

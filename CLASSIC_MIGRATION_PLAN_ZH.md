@@ -329,6 +329,15 @@ G 阶段验收：
 
 后续进展：
 
+- VastAI bootstrap 默认只上传小型远端恢复脚本：
+  `scripts/vast/bootstrap_from_ssh` 可解析 Vast 提供的 SSH 命令，由远端
+  Git clone 主仓库并递归恢复固定 submodule commit，记录解析后的 commit
+  清单。完整工作树 rsync 仅保留为显式 `--sync-working-tree` fallback。
+  远端 `restore_and_launch.sh` 交互验证 HF 身份、选择算法/任务/数据集/
+  输出及 resume 仓库、W&B/ServerChan/Vast 凭据，再恢复环境并启动。
+  OpenPI 支持多个 HF LeRobot v3 数据集的虚拟加权混合，逐源校验 schema，
+  norm stats 与训练使用同一比例；DP/ACT/LingBot-v1 仍明确限制单数据集。
+
 - 最终镜像流程已拆分为两层：`scripts/kuavo_base_image` 管理不含任务
   权重的算法基础镜像并可选导出 TAR；`scripts/package_inference_image`
   按 task + algorithm + checkpoint 生成推理派生镜像，默认不执行

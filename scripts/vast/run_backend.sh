@@ -27,6 +27,7 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 : "${RESUME_MODE:=none}"
 : "${RESUME_REPO:=}"
 : "${RESUME_RUN_ID:=}"
+: "${DATASET_MIX_JSON:=}"
 
 case "${MODEL_BACKEND}" in
   dp|act|openpi|lingbot-v1|lingbot-v2) ;;
@@ -98,7 +99,28 @@ describe_profile() {
   esac
 }
 
+dataset_mix_count=0
+if [[ -n "${DATASET_MIX_JSON}" ]]; then
+  dataset_mix_count="$(DATASET_MIX_JSON="${DATASET_MIX_JSON}" "${PYTHON_BIN}" - <<'PY'
+import json
+import os
+
+payload = json.loads(os.environ["DATASET_MIX_JSON"])
+if not isinstance(payload, list) or not payload:
+    raise SystemExit("DATASET_MIX_JSON must be a non-empty JSON list")
+if any(float(item["weight"]) <= 0 for item in payload):
+    raise SystemExit("Every dataset mixture weight must be positive")
+print(len(payload))
+PY
+)"
+fi
+if (( dataset_mix_count > 1 )) && [[ "${MODEL_BACKEND}" != "openpi" ]]; then
+  echo "${MODEL_BACKEND} currently accepts one dataset; weighted virtual mixtures are supported by OpenPI." >&2
+  exit 2
+fi
+
 describe_profile
+echo "Datasets: $(( dataset_mix_count > 0 ? dataset_mix_count : 1 ))"
 if [[ "${DRY_RUN}" == "1" ]]; then
   for name in HF_TOKEN WANDB_API_KEY SERVERCHAN_SENDKEY VAST_API_KEY DATASET_REPO MODEL_REPO RESUME_REPO; do
     if [[ -n "${!name:-}" ]]; then
@@ -407,13 +429,10 @@ case "${MODEL_BACKEND}" in
   openpi)
     set_phase "OpenPI delegated pipeline"
     TRAIN_STARTED=1
-    if [[ "${RESUME_MODE}" == "hf" && "${RESUME_REPO}" != "${MODEL_REPO}" ]]; then
-      echo "OpenPI resume currently requires RESUME_REPO=MODEL_REPO." >&2
-      exit 2
-    fi
     child_serverchan="${SERVERCHAN_SENDKEY}"
     SERVERCHAN_SENDKEY="" AUTO_STOP_INSTANCE=0 \
       RESUME="$([[ "${RESUME_MODE}" == "hf" ]] && echo 1 || echo 0)" \
+      RESUME_REPO="${RESUME_REPO:-${MODEL_REPO}}" \
       RUN_ID="${RESUME_RUN_ID:-${RUN_ID}}" \
       CODE_DIR="${CODE_DIR}/third_party/openpi-kuavo" \
       WORK_ROOT="${WORK_ROOT}" \

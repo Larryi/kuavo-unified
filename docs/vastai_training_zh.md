@@ -1,5 +1,19 @@
 # VastAI 统一云端训练入口
 
+完整的源码同步、交互恢复、多数据集、训练、Docker 打包和 ROS 交付流程见
+`docs/end_to_end_training_delivery_vastai_zh.md`。
+
+推荐从本机解析 VastAI 提供的 SSH 命令，只上传小型 bootstrap；远端再从
+Git 拉取主仓库并递归恢复固定 submodule commit：
+
+```bash
+scripts/vast/bootstrap_from_ssh \
+  --ssh-command 'ssh -p 12345 root@1.2.3.4 -L 8080:localhost:8080'
+```
+
+Git 恢复完成后会进入远端 `restore_and_launch.sh` 交互向导。本地工作树
+rsync 仅作为显式 `--sync-working-tree` fallback，不是新实例默认方案。
+
 一个 VastAI 实例只运行一个任务数据集和一种算法。面向用户的入口同时
 要求 `--task` 与 `--algorithm`：
 
@@ -40,9 +54,10 @@ scripts/vast/launch_job.sh \
   --port "<Vast SSH port>"
 ```
 
-启动器通过 `rsync` 同步 unified 仓库及已经初始化的子模块内容，排除
-`.git`、虚拟环境、输出、checkpoint、W&B 日志和压缩镜像；私有环境文件
-单独上传到远端 `.secrets/` 并设为 `0600`。默认后台启动，日志位于
+旧的非交互 `launch_job.sh` 仍可通过 rsync 同步 unified 工作树；新的推荐
+入口 `bootstrap_from_ssh` 默认由远端 Git clone/submodule 恢复源码。
+私有环境文件单独保存在远端 `.secrets/` 并设为 `0600`。默认后台启动，
+日志位于
 `/workspace/kuavo_unified_stack/logs/<task>-<backend>-launcher.log`。设置
 `DETACH=0` 可前台运行，`SYNC_ONLY=1` 只同步不启动。
 
@@ -66,8 +81,9 @@ scripts/vast/launch_job.sh \
 ```
 
 resume 仓库必须包含 optimizer、processor、RNG/accelerator 或 DCP 等完整
-训练状态，只有推理用 `model.safetensors` 不足以续训。OpenPI 当前要求
-resume 仓库就是 `MODEL_REPO`。LingBot-v1 的 resume 仓库必须保存完整
+训练状态，只有推理用 `model.safetensors` 不足以续训。OpenPI 可以从独立
+的 resume 仓库读取完整 run，再上传到本次选择的 `MODEL_REPO`。
+LingBot-v1 的 resume 仓库必须保存完整
 `checkpoints/global_step_*` DCP 目录；流水线会在训练前下载到指定 run。
 
 ## 模型与权重
