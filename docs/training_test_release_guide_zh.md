@@ -538,7 +538,11 @@ OpenPI resume 先下载到 `<run>.hf-download` staging 目录，并只在
 正式 run 目录。下载被中断后再次启动会继续 staging 下载，不会再把仅存在
 数字 step 目录的残缺 checkpoint 当成完整状态。HF 的文件计数可能在传输
 单个大型 Orbax 分片时长时间不变，可观察 staging 目录总大小是否仍在增长，
-不要仅凭 `9/39` 判断死锁。
+不要仅凭 `9/39` 判断死锁。若目录大小也长期完全不变，resume 下载默认禁用
+Xet、改走官方 HTTP，使用 4 个并发 worker；单次连接使用 120 秒下载超时，
+整个尝试最多 1800 秒并自动重试 5 次。可分别用
+`RESUME_HF_DOWNLOAD_WORKERS`、`RESUME_DOWNLOAD_TIMEOUT_SECONDS`、
+`RESUME_DOWNLOAD_ATTEMPT_SECONDS` 和 `RESUME_DOWNLOAD_RETRIES` 覆盖。
 模型输出仓库默认创建/设置为公开；确需私有时可在生成的 env 中显式设置
 `MODEL_REPO_PRIVATE=1`。上传 checkpoint 时会排除本地
 `.cache/huggingface/**` 元数据，避免 `upload_large_folder` 递归读取自身
