@@ -324,6 +324,9 @@ def test_openpi_resume_uses_checkpoint_wandb_id_and_lr_tail() -> None:
     assert 'os.environ.get("WANDB_RUN_ID", "").strip()' in train_text
     pipeline_text = OPENPI_PIPELINE.read_text(encoding="utf-8")
     assert 'ignore_patterns=[".cache/**"]' in pipeline_text
+    assert "shutil.rmtree(upload_cache)" in pipeline_text
+    assert "Primary training failure (last 80 log lines)" in pipeline_text
+    assert "skipping fallback upload" in pipeline_text
     assert ': "${MODEL_REPO_PRIVATE:=0}"' in pipeline_text
 
 
