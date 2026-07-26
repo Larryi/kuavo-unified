@@ -35,14 +35,14 @@ LingBot-v2 还需要传入匹配的源码、processor、robot config 和归一�
 
 ```bash
 python tools/open_loop_eval.py \
-  --dataset-root /path/to/lerobot \
-  --repo-id kuavo/task1 \
+  --dataset-root /path/to/task2/lerobot \
+  --repo-id kuavo/task2 \
   --policy-type lingbot_v2 \
   --policy-path /path/to/hf_ckpt \
   --lingbot-root third_party/lingbot-vla-v2 \
   --qwen25-path /path/to/Qwen3-VL \
-  --robot-name kuavo_v2_right_arm \
-  --norm-stats-file assets/norm_stats/kuavo_v2_right_arm_meanstd.json
+  --robot-name kuavo_v2_bimanual \
+  --norm-stats-file assets/norm_stats/kuavo_v2_bimanual_task2_meanstd.json
 ```
 
 OpenPI 示例（先在 OpenPI 容器或隔离环境启动 Server）：

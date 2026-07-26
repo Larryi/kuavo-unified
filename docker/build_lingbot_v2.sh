@@ -2,7 +2,7 @@
 set -euo pipefail
 
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-readonly EXPECTED_LINGBOT_V2_COMMIT="0f48206a34d3bd24454f0cc2671397a1c9065d4b"
+readonly EXPECTED_LINGBOT_V2_COMMIT="231eb4fb9a78bf567957a8be0d95804885421a8f"
 IMAGE_NAME="${IMAGE_NAME:-kuavo-lingbot-v2}"
 CLASSIC_BASE_IMAGE="${CLASSIC_BASE_IMAGE:-kuavo-classic:latest}"
 ENV_ARCHIVE="${LINGBOT_V2_ENV_ARCHIVE:-}"

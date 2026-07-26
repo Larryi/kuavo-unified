@@ -3,7 +3,7 @@
 LingBot v1、v2 分别使用固定子模块和隔离环境：
 
 - v1：`third_party/lingbot-vla@4eb34b7`；
-- v2：`third_party/lingbot-vla-v2@0f48206`，远端为
+- v2：`third_party/lingbot-vla-v2@231eb4f`，远端为
   `Larryi/lingbot-vla-v2`。
 
 2026-07-25 核对官方 `Robbyant/lingbot-vla-v2` 后，官方 main 最新为

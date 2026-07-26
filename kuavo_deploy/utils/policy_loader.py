@@ -6,9 +6,6 @@ import torch
 
 import lerobot_patches.custom_patches  # noqa: F401
 from kuavo_deploy.utils.logging_utils import setup_logger
-from kuavo_train.wrapper.policy.act.ACTPolicyWrapper import CustomACTPolicyWrapper
-from kuavo_train.wrapper.policy.diffusion.DiffusionPolicyWrapper import CustomDiffusionPolicyWrapper
-from lerobot.policies.factory import make_pre_post_processors
 
 
 log_model = setup_logger("model")
@@ -92,6 +89,11 @@ def load_policy_and_processors(
         log_model.warning("Warning: Using CPU for inference, this may be slow.")
 
     if policy_type == "diffusion":
+        from kuavo_train.wrapper.policy.diffusion.DiffusionPolicyWrapper import (
+            CustomDiffusionPolicyWrapper,
+        )
+        from lerobot.policies.factory import make_pre_post_processors
+
         policy = CustomDiffusionPolicyWrapper.from_pretrained(pretrained_path, strict=True)
         processor_root = resolve_processor_root(pretrained_path)
         preprocessor, postprocessor = make_pre_post_processors(
@@ -102,6 +104,9 @@ def load_policy_and_processors(
             },
         )
     elif policy_type == "act":
+        from kuavo_train.wrapper.policy.act.ACTPolicyWrapper import CustomACTPolicyWrapper
+        from lerobot.policies.factory import make_pre_post_processors
+
         policy = CustomACTPolicyWrapper.from_pretrained(pretrained_path, strict=True)
         processor_root = resolve_processor_root(pretrained_path)
         preprocessor, postprocessor = make_pre_post_processors(

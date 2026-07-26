@@ -119,7 +119,10 @@ DP/ACT 可复用同一 client YAML。每次只启动一个 worker，
   `client_execute_steps: 1`；
 - LingBot-v2：云端训练路径已恢复；ROS Noetic 基础镜像已完成 focal
   源码 FlashAttention 构建，并通过 RTX 3090、Torch CUDA、
-  KuavoBaseEnv 导入。真实权重 open-loop/ROS mock 尚未执行。
+  KuavoBaseEnv 导入。`global_step_15000/hf_ckpt` 已严格加载并完成
+  Task2 episode 0 的 3-sample、50-step open-loop：16 维动作全部有限，
+  首动作 MAE 0.0198、整体 MAE 0.0621、范围越界率 6.625%。进入真机前
+  必须用 Viewer 检查越界维度并保持限幅；ROS mock 尚未执行。
 
 ```bash
 MODEL_BACKEND=openpi DRY_RUN=1 scripts/vast/launch.sh

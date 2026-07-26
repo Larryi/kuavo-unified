@@ -367,8 +367,10 @@ G 阶段验收：
   操作者于 2026-07-26 恢复 LingBot-v2 适配。云端 Task2 训练路由、预训练
   资产下载、混合 norm、`torch.compile` 和完整 HF checkpoint 已接通；
   部署采用 CUDA 12.8/Ubuntu 20.04 builder 源码构建 flash-attn，再进入
-  Classic ROS Noetic 最终镜像；基础镜像 GPU/ROS 导入已经通过。真实权重
-  open-loop/ROS mock 和真机验收仍未完成。
+  Classic ROS Noetic 最终镜像；基础镜像 GPU/ROS 导入已经通过。
+  `global_step_15000/hf_ckpt` 的 1708 个权重键已严格加载，Task2 episode 0
+  的 3-sample、50-step open-loop 已通过，动作非有限率为 0，范围越界率
+  为 6.625%。ROS mock 和真机验收仍未完成。
 - LingBot-v1 随后完成真实 GPU open-loop 门禁并定位旧权重动作契约：
   该 checkpoint 的 `source_training_config.yaml` 使用旧
   `custom_task1_345_right_arm`，输出为绝对关节位置；若误用新版

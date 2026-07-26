@@ -72,6 +72,8 @@ ARG PIP_INDEX_URL=https://mirrors.bfsu.edu.cn/pypi/web/simple
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     PATH=/opt/kuavo-env/bin:${PATH} \
+    CC=/usr/bin/gcc \
+    CXX=/usr/bin/g++ \
     PIP_INDEX_URL=${PIP_INDEX_URL} \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=0 \
@@ -80,6 +82,15 @@ ENV LANG=C.UTF-8 \
     TRANSFORMERS_OFFLINE=1
 
 WORKDIR /root/kuavo_data_challenge
+
+# Triton compiles a small CUDA driver helper on first inference. Keep the
+# runtime compiler in the final ROS image; the large CUDA toolkit remains only
+# in the builder stage.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean && \
+    apt-get update && apt-get install -y --no-install-recommends \
+        build-essential
 
 # The complete Python environment, including FlashAttention compiled against
 # Ubuntu 20.04/glibc 2.31, comes from the CUDA builder above.
