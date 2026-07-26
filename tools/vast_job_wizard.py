@@ -156,7 +156,7 @@ def select_training_datasets(
 ) -> list[str]:
     selected: list[str] = []
     if allow_multiple:
-        print("OpenPI 支持多个同构数据集的虚拟加权混合。请逐个添加。")
+        print("当前算法支持多个同构数据集的虚拟加权混合。请逐个添加。")
     else:
         print("当前算法只支持一个训练数据集。")
     while True:
@@ -223,7 +223,7 @@ def main() -> int:
     print(f"HF 身份验证成功：{identity['name']}")
 
     datasets = list_owned_repositories(api, identity, repo_type="dataset")
-    allow_multiple = algorithm == "openpi"
+    allow_multiple = algorithm in {"openpi", "dp", "act", "lingbot-v1"}
     selected = select_training_datasets(
         datasets,
         allow_multiple=allow_multiple,

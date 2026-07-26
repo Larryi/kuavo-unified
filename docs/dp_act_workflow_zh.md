@@ -8,9 +8,19 @@
 训练运行目录必须同时保存：
 
 - 根目录模型（最新模型）；
-- `epochN/` 和 `epochbest/` 模型快照；
+- `epochbest/` 部署候选模型快照；
 - `policy_preprocessor.json`、`policy_postprocessor.json` 及其权重；
 - `learning_state.pth` 和 `rng_state.pth`。
+
+训练每个 epoch 覆盖 latest 模型和完整 resume 状态。默认
+`training.keep_last_epoch_checkpoints: 0`，不再生成重复的
+`epoch10/epoch20/...`；`epochbest` 作为部署候选单独保留。如果确实需要
+周期安全快照，可把该值改为 `1`（或更大），训练器只保留最新 N 个
+`epochN`。
+
+设置 `KUAVO_DATASET_MIX_JSON` 可训练多个同构数据集。JSON 每项包含
+`repo_id`、本地 `root`、正权重和唯一 `name`；训练器会按比例建立虚拟
+epoch、合并 norm stats，并用虚拟 epoch 长度计算学习率调度。
 
 推理既可传运行根目录，也可传 `epochN/`。加载器会从快照目录向上查找
 配套的 pre/post processor，并把 processor 的设备改为本次指定的

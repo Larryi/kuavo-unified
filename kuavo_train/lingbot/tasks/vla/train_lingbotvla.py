@@ -28,6 +28,7 @@ from kuavo_train.lingbot.compat import (
     patch_pi0_config_for_lingbot,
     patch_transformers_for_lingbot,
 )
+from kuavo_train.dataset_mixture import VirtualWeightedDataset, load_dataset_sources
 
 patch_transformers_for_lingbot()
 patch_pi0_config_for_lingbot()
@@ -619,16 +620,44 @@ def main():
                 else None
             )
             if VLADataset is not None:
-                train_dataset = VLADataset(
-                    repo_id=args.data.train_path,
-                    data_name=args.data.data_name,
-                    robot_config_root=args.data.robot_config_root,
-                    config=model.config,
-                    tokenizer=processor.tokenizer,
-                    data_config=args.data,
-                    image_processor=image_processor,
-                    use_depth_align=use_depth_align,
+                mixture_sources = load_dataset_sources()
+                dataset_roots = (
+                    [source.root for source in mixture_sources]
+                    if mixture_sources
+                    else [args.data.train_path]
                 )
+                source_datasets = [
+                    VLADataset(
+                        repo_id=dataset_root,
+                        data_name=args.data.data_name,
+                        robot_config_root=args.data.robot_config_root,
+                        config=model.config,
+                        tokenizer=processor.tokenizer,
+                        data_config=args.data,
+                        image_processor=image_processor,
+                        use_depth_align=use_depth_align,
+                    )
+                    for dataset_root in dataset_roots
+                ]
+                if mixture_sources:
+                    train_dataset = VirtualWeightedDataset(
+                        source_datasets,
+                        mixture_sources,
+                        metadata=getattr(source_datasets[0], "dataset_meta", None),
+                    )
+                    logger.info_rank0(
+                        "Dataset mixture: "
+                        + ", ".join(
+                            f"{source.repo_id}={weight:.6f}"
+                            for source, weight in zip(
+                                mixture_sources,
+                                train_dataset.realized_weights,
+                                strict=True,
+                            )
+                        )
+                    )
+                else:
+                    train_dataset = source_datasets[0]
             elif args.data.data_name == 'libero':
                 train_dataset = liberoDataset(repo_id=args.data.train_path, config=model.config, tokenizer=processor.tokenizer, data_config=args.data, image_processor=processor.image_processor if 'qwen' in args.model.tokenizer_path.lower() else None,use_depth_align=use_depth_align)
             elif 'custom' in (args.data.data_name or "").lower():

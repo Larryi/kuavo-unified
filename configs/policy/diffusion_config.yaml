@@ -22,6 +22,7 @@ training:
     max_epoch: 500  # Max trainign epoch, used to control learning rate controller. Related to max_training_step beneath
     
     save_freq_epoch: 10  # Training parameter save frequency. 10 epoch per saved weights
+    keep_last_epoch_checkpoints: 0  # Disable duplicate epochN snapshots; best/latest are separate.
     log_freq: 1  # Progress bar refresh frequency. 1 = Every iteration step.
     device: "cuda" # Training device. Single GPU only by default. Systems with multiple GPU's please use CUDA_VISIBLE_DEVICES=6 as an envionment variable. cuda:6 might not work.
     accumulation_steps: 1  # Grad accumulation step

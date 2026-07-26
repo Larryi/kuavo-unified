@@ -22,6 +22,7 @@ training:
     max_epoch: 500  # 最大训练轮次，用于控制学习率调整器，与下述max_training_step相关
     
     save_freq_epoch: 10  # 模型参数保存频率，每10个epoch保存一次
+    keep_last_epoch_checkpoints: 0  # 默认不生成重复 epochN；best/latest 单独保留
     log_freq: 1  # 进度条刷新频率，每1个迭代step
     device: "cuda" # 训练设备，目前只支持单卡，多卡请使用CUDA_VISIBLE_DEVICES=6指定环境变量后使用，cuda:6这种类似的可能会出错
     accumulation_steps: 1  # 梯度累积步数，自定义

@@ -63,7 +63,8 @@ scripts/vast/launch_job.sh \
 
 ## 数据、预训练权重与 resume
 
-私有 env 文件中的 `DATASET_REPO` 指向这一个任务的 LeRobot 数据集，
+私有 env 文件中的 `DATASET_REPO` 指向所选的第一个 LeRobot 数据集，
+`DATASET_MIX_JSON` 保存一个或多个数据集及其权重，
 `MODEL_REPO` 指向本次训练的输出仓库。远端会自动下载数据集；OpenPI 与
 LingBot 会按 profile 继续下载各自基模和 tokenizer，DP/ACT 只准备
 torchvision ResNet18 公共权重。
@@ -103,6 +104,12 @@ MoGe、Depth 和 DINO 路径会显式传给上游 trainer，避免继承开发�
 训练入口，多卡时自动改用 Accelerate，并保持 batch、梯度累积和最大步数
 覆盖参数一致。默认还会用 `requirements_train_cloud.txt` 补齐依赖；
 已在镜像中预装并验证依赖时，可设置 `PREPARE_ENV=0`。
+
+OpenPI、DP、ACT 和 LingBot-v1 都支持同构数据集的虚拟加权混合。向导会
+逐个选择 HF dataset 并输入比例；远端下载后校验 task 对应 state/action
+维度、相机、FPS、robot type 和 LeRobot 版本。DP/ACT 合并 norm stats，
+LingBot-v1 和 OpenPI 按训练采样分布重新计算 norm。LingBot-v2 仍只接受
+单数据集。
 
 LingBot-v2 云端训练适配暂缓，不进入当前流程。
 

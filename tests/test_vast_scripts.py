@@ -347,7 +347,13 @@ def test_resume_repository_state_detection(
     assert resume_repo_has_training_state(algorithm, files) is expected
 
 
-def test_remote_runner_rejects_weighted_mix_for_classic_before_network() -> None:
+@pytest.mark.parametrize(
+    ("backend", "task"),
+    [("dp", "task2"), ("act", "task3"), ("lingbot-v1", "task1")],
+)
+def test_remote_runner_accepts_weighted_mix_for_supported_backends(
+    backend: str, task: str
+) -> None:
     mixture = json.dumps(
         [
             {"repo_id": "owner/a", "weight": 0.5},
@@ -359,8 +365,8 @@ def test_remote_runner_rejects_weighted_mix_for_classic_before_network() -> None
         cwd=ROOT,
         env={
             **os.environ,
-            "MODEL_BACKEND": "dp",
-            "TRAINING_TASK": "task2",
+            "MODEL_BACKEND": backend,
+            "TRAINING_TASK": task,
             "DATASET_MIX_JSON": mixture,
             "DRY_RUN": "1",
         },
@@ -368,8 +374,8 @@ def test_remote_runner_rejects_weighted_mix_for_classic_before_network() -> None
         capture_output=True,
         check=False,
     )
-    assert result.returncode == 2
-    assert "weighted virtual mixtures are supported by OpenPI" in result.stderr
+    assert result.returncode == 0
+    assert "Datasets: 2" in result.stdout
 
 
 def test_remote_runner_accepts_weighted_mix_for_openpi_dry_run() -> None:

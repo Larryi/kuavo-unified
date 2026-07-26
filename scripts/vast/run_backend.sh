@@ -114,8 +114,8 @@ print(len(payload))
 PY
 )"
 fi
-if (( dataset_mix_count > 1 )) && [[ "${MODEL_BACKEND}" != "openpi" ]]; then
-  echo "${MODEL_BACKEND} currently accepts one dataset; weighted virtual mixtures are supported by OpenPI." >&2
+if (( dataset_mix_count > 1 )) && [[ "${MODEL_BACKEND}" == "lingbot-v2" ]]; then
+  echo "lingbot-v2 is paused and currently accepts one dataset." >&2
   exit 2
 fi
 
@@ -314,6 +314,30 @@ download_resume() {
   download_hf "${RESUME_REPO}" "${destination}" model
 }
 
+resolve_dataset_mixture() {
+  local resolved_output="${LOG_DIR}/dataset_mix.resolved.json"
+  if [[ -z "${DATASET_MIX_JSON}" ]]; then
+    set_phase "download dataset"
+    download_hf "${DATASET_REPO}" "${DATASET_ROOT}" dataset
+    return 0
+  fi
+  set_phase "download and validate dataset mixture"
+  DATASET_MIX_JSON="${DATASET_MIX_JSON}" \
+    "${PYTHON_BIN}" "${CODE_DIR}/tools/resolve_hf_dataset_mixture.py" \
+      --task "${TRAINING_TASK}" \
+      --output-root "${WORK_ROOT}/datasets/mixture" \
+      --resolved-output "${resolved_output}"
+  KUAVO_DATASET_MIX_JSON="$(
+    "${PYTHON_BIN}" -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])), separators=(",", ":")))' \
+      "${resolved_output}"
+  )"
+  DATASET_ROOT="$(
+    "${PYTHON_BIN}" -c 'import json,sys; print(json.load(open(sys.argv[1]))[0]["root"])' \
+      "${resolved_output}"
+  )"
+  export KUAVO_DATASET_MIX_JSON
+}
+
 upload_directory() {
   local source_dir="$1"
   [[ -d "${source_dir}" ]] || { echo "Upload directory is missing: ${source_dir}" >&2; return 1; }
@@ -333,8 +357,7 @@ run_classic() {
   method_name="${METHOD_NAME:-${MODEL_BACKEND}_cloud}"
   output_base="${WORK_ROOT}/outputs/${MODEL_BACKEND}"
   run_dir="${output_base}/run_${RUN_ID}"
-  set_phase "download dataset"
-  download_hf "${DATASET_REPO}" "${DATASET_ROOT}" dataset
+  resolve_dataset_mixture
   if [[ "${RESUME_MODE}" == "hf" ]]; then
     run_dir="${output_base}/run_${RESUME_RUN_ID}"
     download_resume "${run_dir}"
@@ -366,6 +389,9 @@ run_classic() {
       kuavo_train/train_policy_with_accelerate.py "${overrides[@]}")
   else
     (cd "${CODE_DIR}" && "${PYTHON_BIN}" kuavo_train/train_policy.py "${overrides[@]}")
+  fi
+  if [[ -f "${LOG_DIR}/dataset_mix.resolved.json" ]]; then
+    cp "${LOG_DIR}/dataset_mix.resolved.json" "${run_dir}/dataset_mix.json"
   fi
   upload_directory "${run_dir}"
 }
@@ -431,6 +457,7 @@ case "${MODEL_BACKEND}" in
     TRAIN_STARTED=1
     child_serverchan="${SERVERCHAN_SENDKEY}"
     SERVERCHAN_SENDKEY="" AUTO_STOP_INSTANCE=0 \
+      DATASET_MIX_JSON="${DATASET_MIX_JSON}" \
       RESUME="$([[ "${RESUME_MODE}" == "hf" ]] && echo 1 || echo 0)" \
       RESUME_REPO="${RESUME_REPO:-${MODEL_REPO}}" \
       RUN_ID="${RESUME_RUN_ID:-${RUN_ID}}" \
@@ -454,6 +481,8 @@ case "${MODEL_BACKEND}" in
       LINGBOT_ROOT="${CODE_DIR}/third_party/lingbot-vla" \
       RESUME="$([[ "${RESUME_MODE}" == "hf" ]] && echo 1 || echo 0)" \
       RESUME_REPO="${RESUME_REPO}" \
+      DATASET_MIX_JSON="${DATASET_MIX_JSON}" \
+      TRAINING_TASK="${TRAINING_TASK}" \
       RUN_ID="${RESUME_RUN_ID:-${RUN_ID}}" \
       WORK_ROOT="${WORK_ROOT}" \
       bash "${CODE_DIR}/scripts/run_task1_lingbot_full_pipeline.sh"

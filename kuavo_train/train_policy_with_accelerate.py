@@ -32,6 +32,14 @@ from lerobot.policies.act.modeling_act import ACTPolicy
 from diffusers.optimization import get_scheduler
 from kuavo_train.utils.transforms import ImageTransforms, ImageTransformsConfig, ImageTransformConfig
 from kuavo_train.compile_utils import maybe_compile_policy
+from kuavo_train.checkpoint_retention import prune_periodic_epoch_checkpoints
+from kuavo_train.dataset_mixture import (
+    build_virtual_mixture,
+    combine_dataset_stats,
+    load_dataset_sources,
+    validate_metadata_compatibility,
+    virtual_source_counts,
+)
 from kuavo_train.accelerate_utils import (
     dataloader_worker_options,
     resolve_accelerate_options,
@@ -249,7 +257,33 @@ def main(cfg: DictConfig):
     accelerator.wait_for_everyone()
 
     # Dataset metadata and features
-    dataset_metadata = LeRobotDatasetMetadata(cfg.repoid, root=cfg.root)
+    mixture_sources = load_dataset_sources()
+    if mixture_sources:
+        mixture_metadata = [
+            LeRobotDatasetMetadata(source.repo_id, root=source.root)
+            for source in mixture_sources
+        ]
+        validate_metadata_compatibility(mixture_metadata)
+        dataset_metadata = mixture_metadata[0]
+        dataset_stats = combine_dataset_stats(
+            [metadata.stats for metadata in mixture_metadata],
+            [source.weight for source in mixture_sources],
+        )
+        dataset_total_frames = sum(
+            virtual_source_counts(
+                [int(metadata.info["total_frames"]) for metadata in mixture_metadata],
+                mixture_sources,
+            )
+        )
+        accelerator.print(
+            "Weighted dataset mixture:",
+            [(source.repo_id, source.weight, source.root) for source in mixture_sources],
+        )
+    else:
+        mixture_metadata = []
+        dataset_metadata = LeRobotDatasetMetadata(cfg.repoid, root=cfg.root)
+        dataset_stats = dataset_metadata.stats
+        dataset_total_frames = int(dataset_metadata.info["total_frames"])
     features = dataset_to_policy_features(dataset_metadata.features)
     input_features = {k: ft for k, ft in features.items() if ft.type is not FeatureType.ACTION}
     output_features = {k: ft for k, ft in features.items() if ft.type is FeatureType.ACTION}
@@ -260,12 +294,16 @@ def main(cfg: DictConfig):
     policy = build_policy(cfg.policy_name, policy_cfg)
     maybe_compile_policy(policy, cfg, log=accelerator.print)
     accelerator.wait_for_everyone()
-    preprocessor, postprocessor = make_pre_post_processors(policy_cfg, dataset_stats=dataset_metadata.stats)
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg, dataset_stats=dataset_stats
+    )
     if accelerator.is_main_process:
         preprocessor.save_pretrained(output_directory)
         postprocessor.save_pretrained(output_directory)
     # Initialize optimizer and lr scheduler
-    optimizer, lr_scheduler = build_optimizer_and_scheduler(policy, cfg, dataset_metadata.info["total_frames"], accelerator)
+    optimizer, lr_scheduler = build_optimizer_and_scheduler(
+        policy, cfg, dataset_total_frames, accelerator
+    )
 
     # print only in main process
     accelerator.print("\n---policy_cfg", policy_cfg)
@@ -283,17 +321,39 @@ def main(cfg: DictConfig):
     delta_timestamps = build_delta_timestamps(dataset_metadata, policy_cfg)
 
     image_transforms = build_augmenter(cfg.training.RGB_Augmenter)
-    dataset = LeRobotDataset(
-        cfg.repoid,
-        delta_timestamps=delta_timestamps,
-        root=cfg.root,
-        image_transforms=None,
-    )
+    if mixture_sources:
+        source_datasets = [
+            LeRobotDataset(
+                source.repo_id,
+                delta_timestamps=delta_timestamps,
+                root=source.root,
+                image_transforms=None,
+            )
+            for source in mixture_sources
+        ]
+        dataset = build_virtual_mixture(
+            source_datasets,
+            mixture_sources,
+            metadata=dataset_metadata,
+            drop_n_last_frames=int(
+                getattr(cfg.policy, "drop_n_last_frames", 0) or 0
+            ),
+        )
+    else:
+        dataset = LeRobotDataset(
+            cfg.repoid,
+            delta_timestamps=delta_timestamps,
+            root=cfg.root,
+            image_transforms=None,
+        )
     accelerator.wait_for_everyone()
     # Training loop
     aug_step = insert_before_normalizer(preprocessor, AugmentationProcessorStep(image_transforms, dataset.meta.camera_keys))  # just for training
     
-    if hasattr(cfg.policy, "drop_n_last_frames"):
+    if mixture_sources:
+        shuffle = True
+        sampler = None
+    elif hasattr(cfg.policy, "drop_n_last_frames"):
         shuffle = False
         sampler = EpisodeAwareSampler(
             dataset.meta.episodes["dataset_from_index"],
@@ -401,9 +461,16 @@ def main(cfg: DictConfig):
                 unwrapped_policy.save_pretrained(output_directory / "epochbest")
 
             # Save checkpoint every N epochs
-            if (epoch + 1) % cfg.training.save_freq_epoch == 0:
+            periodic_keep = int(
+                getattr(cfg.training, "keep_last_epoch_checkpoints", 0)
+            )
+            if periodic_keep > 0 and (epoch + 1) % cfg.training.save_freq_epoch == 0:
                 unwrapped_policy = accelerator.unwrap_model(policy)
                 unwrapped_policy.save_pretrained(output_directory / f"epoch{epoch+1}")
+                prune_periodic_epoch_checkpoints(
+                    output_directory,
+                    periodic_keep,
+                )
 
             accelerator.print("!!!!!!Saving latest epoch training state...,DON'T CTRL+C EXIT!!!!!!")
             training_state = {

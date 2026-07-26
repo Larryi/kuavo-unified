@@ -34,6 +34,7 @@ training:
   max_epoch: 1000
   max_training_step: 120000
   save_freq_epoch: 10
+  keep_last_epoch_checkpoints: 0
   log_freq: 10
 
   # Enable only after a short eager smoke test. DDP compiles once per rank.

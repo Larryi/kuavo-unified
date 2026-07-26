@@ -348,11 +348,30 @@ retry 3 hf auth whoami
 
 PIPELINE_PHASE="download dataset and models"
 mkdir -p "${DATASET_ROOT}" "${LINGBOT_MODEL_ROOT}" "${QWEN_MODEL_ROOT}"
-retry 3 hf download "${DATASET_REPO}" --repo-type dataset --local-dir "${DATASET_ROOT}" --max-workers 16
+if [[ -n "${DATASET_MIX_JSON:-}" ]]; then
+    MIXTURE_MANIFEST="${LOG_DIR}/dataset_mix.resolved.json"
+    DATASET_MIX_JSON="${DATASET_MIX_JSON}" \
+        python "${CODE_DIR}/tools/resolve_hf_dataset_mixture.py" \
+        --task task1 \
+        --output-root "${WORK_ROOT}/datasets/mixture" \
+        --resolved-output "${MIXTURE_MANIFEST}"
+    KUAVO_DATASET_MIX_JSON="$(
+        python -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])), separators=(",", ":")))' \
+            "${MIXTURE_MANIFEST}"
+    )"
+    DATASET_ROOT="$(
+        python -c 'import json,sys; print(json.load(open(sys.argv[1]))[0]["root"])' \
+            "${MIXTURE_MANIFEST}"
+    )"
+    export KUAVO_DATASET_MIX_JSON
+else
+    retry 3 hf download "${DATASET_REPO}" --repo-type dataset --local-dir "${DATASET_ROOT}" --max-workers 16
+fi
 retry 3 hf download "${LINGBOT_MODEL_REPO}" --local-dir "${LINGBOT_MODEL_ROOT}" --max-workers 16
 retry 3 hf download "${QWEN_MODEL_REPO}" --local-dir "${QWEN_MODEL_ROOT}" --max-workers 16
 
 PIPELINE_PHASE="validate dataset and build norm"
+if [[ -z "${DATASET_MIX_JSON:-}" ]]; then
 DATASET_ROOT="${DATASET_ROOT}" python - <<'PY'
 import json, os
 from pathlib import Path
@@ -378,9 +397,10 @@ with av.open(str(video)) as container:
     assert frame.width > 0 and frame.height > 0
 print("Dataset validation passed; task metadata:", tasks)
 PY
+fi
 mkdir -p "$(dirname "${NORM_FILE}")"
 PYTHONPATH="${CODE_DIR}:${LINGBOT_ROOT}:${CODE_DIR}/third_party/lerobot/src:${PYTHONPATH:-}" \
-python "${LINGBOT_ROOT}/scripts/compute_norm.py" "${TRAIN_CONFIG}" \
+python "${CODE_DIR}/kuavo_train/lingbot/compute_mixture_norm.py" "${TRAIN_CONFIG}" \
     --data.train_path "${DATASET_ROOT}" \
     --data.norm_stats_file "${NORM_FILE}" \
     --data.num_workers "${DATALOADER_WORKERS}" \
@@ -467,6 +487,9 @@ python tools/export_lingbot_full_checkpoint.py "${checkpoint}" \
 cp "${NORM_FILE}" "${FINAL_HF_DIR}/norm_stats.json"
 cp "${RUN_DIR}/lingbotvla_cli.yaml" "${FINAL_HF_DIR}/lingbotvla_cli.yaml"
 cp "${TRAIN_CONFIG}" "${FINAL_HF_DIR}/source_training_config.yaml"
+if [[ -f "${MIXTURE_MANIFEST:-}" ]]; then
+    cp "${MIXTURE_MANIFEST}" "${FINAL_HF_DIR}/dataset_mix.json"
+fi
 
 PIPELINE_PHASE="upload final model"
 MODEL_REPO="${MODEL_REPO}" python - <<'PY'
@@ -479,15 +502,48 @@ api.update_repo_settings(repo_id=repo, repo_type="model", private=True)
 assert api.model_info(repo).private
 PY
 retry 3 hf upload "${MODEL_REPO}" "${FINAL_HF_DIR}" . --commit-message "train: TASK1-345 LingBot full ${RUN_ID}"
-MODEL_REPO="${MODEL_REPO}" python - <<'PY'
+retry 3 hf upload "${MODEL_REPO}" "${checkpoint}" \
+    "checkpoints/$(basename "${checkpoint}")" \
+    --commit-message "train-state: latest LingBot DCP ${RUN_ID}"
+if [[ -f "${RUN_DIR}/checkpoints/loss.jsonl" ]]; then
+    retry 3 hf upload "${MODEL_REPO}" "${RUN_DIR}/checkpoints/loss.jsonl" \
+        "checkpoints/loss.jsonl" \
+        --commit-message "train-state: LingBot loss history ${RUN_ID}"
+fi
+MODEL_REPO="${MODEL_REPO}" LATEST_DCP="$(basename "${checkpoint}")" python - <<'PY'
 import os
 from huggingface_hub import HfApi
-info = HfApi().model_info(os.environ["MODEL_REPO"])
+api = HfApi()
+repo = os.environ["MODEL_REPO"]
+latest = os.environ["LATEST_DCP"]
+files = set(api.list_repo_files(repo, repo_type="model"))
+stale = [
+    name
+    for name in files
+    if name.startswith("checkpoints/global_step_")
+    and name.split("/", 2)[1] != latest
+]
+if stale:
+    api.delete_files(
+        repo_id=repo,
+        repo_type="model",
+        delete_patterns=stale,
+        commit_message=f"cleanup: retain only latest LingBot DCP {latest}",
+    )
+info = api.model_info(repo)
 files = {item.rfilename for item in info.siblings}
 assert info.private
 assert "config.json" in files and "model.safetensors.index.json" in files
 assert "norm_stats.json" in files and "lingbotvla_cli.yaml" in files
 assert any(name.endswith(".safetensors") for name in files)
+assert any(
+    name.startswith("checkpoints/global_step_") and name.endswith("/model/.metadata")
+    for name in files
+)
+assert any(
+    name.startswith("checkpoints/global_step_") and name.endswith("/optimizer/.metadata")
+    for name in files
+)
 print("Remote model verification passed")
 PY
 

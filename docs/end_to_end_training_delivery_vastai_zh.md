@@ -5,16 +5,16 @@
 | 任务 | 算法 | 本地/云端训练 | ROS Noetic 推理镜像 | 多数据集比例混合 |
 |---|---|---|---|---|
 | Task1 | OpenPI Pi0.5 | 支持 | 支持 | 支持 |
-| Task1 | LingBot-VLA v1 | 支持 | 支持 | 当前仅单数据集 |
-| Task2 | DP | 支持 | 支持 | 当前仅单数据集 |
-| Task3 | ACT | 支持 | 支持 | 当前仅单数据集 |
+| Task1 | LingBot-VLA v1 | 支持 | 支持 | 支持 |
+| Task2 | DP | 支持 | 支持 | 支持 |
+| Task3 | ACT | 支持 | 支持 | 支持 |
 | 任意 | LingBot-VLA v2 | 暂缓 | 暂缓 | 不进入当前流程 |
 
-“多数据集混合”是 OpenPI 已实现的虚拟加权采样，不复制或合并源数据。
+“多数据集混合”使用虚拟加权采样，不复制或合并源数据。
 各源必须具有相同机器人 embodiment、FPS、state/action schema 和相机键。
-比例不必合计为 1，向导会自动归一化。DP、ACT 和 LingBot-v1 在当前训练
-器中没有等价的可靠加权 sampler，向导会限制为一个数据集，避免静默得到
-错误采样比例。
+比例不必合计为 1，向导会自动归一化。DP/ACT 会按混合权重合并
+mean/std/min/max，并让学习率调度器使用虚拟 epoch 长度；LingBot-v1 的
+norm stats 与训练 sampler 使用同一个虚拟混合分布。
 
 ## 一、源码同步策略
 
@@ -92,8 +92,8 @@ scripts/vast/restore_and_launch.sh
 3. 输入 HF token，每个字符以 `*` 回显，并调用 `whoami` 验证身份；
 4. 列出当前 HF 用户及组织可见的 dataset/model 仓库；
 5. 选择算法，自动绑定任务；
-6. 选择数据集；OpenPI 使用“逐个添加、确认是否继续”的流程选择多个，
-   然后输入对应比例；
+6. 选择数据集；OpenPI、DP、ACT、LingBot-v1 均使用“逐个添加、确认是否
+   继续”的流程选择多个，然后输入对应比例；
 7. 选择训练输出模型仓库；
 8. 可选选择 resume 模型仓库并检查完整训练状态标记；
 9. 输入 W&B、ServerChan、VastAI 凭据，均以 `*` 回显；
@@ -131,7 +131,7 @@ ServerChan 可留空；配置后成功或失败都会通知。只有同时提供
 ]
 ```
 
-OpenPI 云端流水线逐个下载到：
+各算法云端流水线逐个下载到各自工作目录下的：
 
 ```text
 /workspace/kuavo_runs/openpi/datasets/mixture/
@@ -142,7 +142,7 @@ schema，再把本地 root 写入 resolved manifest。norm stats 使用相同的
 weighted sampler 重新计算，并以 mixture hash 隔离缓存，避免误用另一种
 数据比例的统计。
 
-OpenPI 选择示意：
+多数据集选择示意：
 
 ```text
 选择或输入训练数据集: 1
@@ -154,9 +154,9 @@ OpenPI 选择示意：
 依次输入 2 个正数配比（逗号分隔，如 55,20,25）: 25,75
 ```
 
-DP/ACT/LingBot-v1 选择多个数据集会在联网和训练前失败。要为这些算法加入
-比例混合，应先在各自 trainer 中实现、测试对应 sampler 和混合 norm
-策略，不能只把多个路径用逗号拼接。
+resolved manifest 会保留每个 HF repo、本地 root 和归一化权重。训练时
+均从该清单读取，不支持用逗号拼接路径。LingBot-v2 仍暂缓且只允许一个
+数据集。
 
 ## 四、预训练权重和 resume
 
@@ -178,6 +178,19 @@ resume 仓库必须是完整训练状态，不是部署权重：
 向导会先读取 HF repo 文件清单并检查算法对应标记。随后还要求输入原始
 `RUN_ID`，下载到训练器期望的原目录，再传入正确的 resume 参数。若只有
 `model.safetensors` 或 LingBot `hf_ckpt`，只能推理，不能无损续训。
+
+### checkpoint 保存与磁盘保留
+
+| 算法 | 保存触发 | 默认保留 |
+|---|---|---|
+| OpenPI | 每 `SAVE_INTERVAL=1000` step | Orbax `max_to_keep=1`；云端 `KEEP_PERIOD` 设为极大值，正常只保留最新完整 step |
+| LingBot-v1 | 每 `SAVE_STEPS=500` step | `KEEP_LAST_CHECKPOINTS=1`，只保留最新完整 DCP；结束后另导出部署 HF checkpoint，并把两者上传到同一模型仓库 |
+| DP/ACT | 每个 epoch 覆盖 latest resume；验证更优时更新 `epochbest` | 默认 `keep_last_epoch_checkpoints=0`，不生成重复 `epochN`；latest 模型/训练状态只留一份，`epochbest` 作为部署候选分开保留 |
+
+LingBot-v1 会把最新 DCP 上传到模型仓库的 `checkpoints/global_step_*`，
+因此 resume 与部署产物同时可用。上传及远端结构校验成功后，如设置
+`DELETE_LOCAL_DCP_AFTER_UPLOAD=1`，会删除本地 DCP；默认值仍为 `0`，以免
+在首次云端验收前误删可恢复现场。
 
 ## 五、训练入口
 

@@ -34,6 +34,14 @@ from kuavo_train.utils.utils import save_rng_state, load_rng_state
 from lerobot.policies.act.modeling_act import ACTPolicy
 from kuavo_train.utils.transforms import ImageTransforms, ImageTransformsConfig, ImageTransformConfig
 from kuavo_train.compile_utils import maybe_compile_policy
+from kuavo_train.checkpoint_retention import prune_periodic_epoch_checkpoints
+from kuavo_train.dataset_mixture import (
+    build_virtual_mixture,
+    combine_dataset_stats,
+    load_dataset_sources,
+    validate_metadata_compatibility,
+    virtual_source_counts,
+)
 from kuavo_train.utils.training_loop import (
     accumulation_window_size,
     should_optimizer_step,
@@ -411,7 +419,33 @@ def main(cfg: DictConfig):
     device = torch.device(cfg.training.device)
 
     # Dataset metadata and features
-    dataset_metadata = LeRobotDatasetMetadata(cfg.repoid, root=cfg.root)
+    mixture_sources = load_dataset_sources()
+    if mixture_sources:
+        mixture_metadata = [
+            LeRobotDatasetMetadata(source.repo_id, root=source.root)
+            for source in mixture_sources
+        ]
+        validate_metadata_compatibility(mixture_metadata)
+        dataset_metadata = mixture_metadata[0]
+        dataset_stats = combine_dataset_stats(
+            [metadata.stats for metadata in mixture_metadata],
+            [source.weight for source in mixture_sources],
+        )
+        dataset_total_frames = sum(
+            virtual_source_counts(
+                [int(metadata.info["total_frames"]) for metadata in mixture_metadata],
+                mixture_sources,
+            )
+        )
+        print(
+            "Weighted dataset mixture:",
+            [(source.repo_id, source.weight, source.root) for source in mixture_sources],
+        )
+    else:
+        mixture_metadata = []
+        dataset_metadata = LeRobotDatasetMetadata(cfg.repoid, root=cfg.root)
+        dataset_stats = dataset_metadata.stats
+        dataset_total_frames = int(dataset_metadata.info["total_frames"])
     print("Camera_keys:", dataset_metadata.camera_keys)
     print("Original dataset features:", dataset_metadata.features)
 
@@ -429,11 +463,15 @@ def main(cfg: DictConfig):
     # Build policy
     policy = build_policy(cfg.policy_name, policy_cfg)
     maybe_compile_policy(policy, cfg)
-    preprocessor, postprocessor = make_pre_post_processors(policy_cfg, dataset_stats=dataset_metadata.stats)
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg, dataset_stats=dataset_stats
+    )
     if not resume_enabled:
         preprocessor.save_pretrained(output_directory)
         postprocessor.save_pretrained(output_directory)
-    optimizer, lr_scheduler = build_optimizer_and_scheduler(policy, cfg, dataset_metadata.info["total_frames"])
+    optimizer, lr_scheduler = build_optimizer_and_scheduler(
+        policy, cfg, dataset_total_frames
+    )
     
     # Initialize AMP GradScaler if use_amp is True
     amp_requested = bool(getattr(cfg.policy, "use_amp", False))
@@ -476,7 +514,9 @@ def main(cfg: DictConfig):
             """ Warning: using `from_pretrained` creates a new policy instance, 
             so the optimizer must be reinitialized here! """
             # print("load policy done ! ")
-            optimizer, lr_scheduler = build_optimizer_and_scheduler(policy, cfg, dataset_metadata.info["total_frames"])
+            optimizer, lr_scheduler = build_optimizer_and_scheduler(
+                policy, cfg, dataset_total_frames
+            )
             
             # Load optimizer, scheduler, scaler and training state
             checkpoint = torch.load(resume_path / "learning_state.pth", map_location=device)
@@ -511,16 +551,38 @@ def main(cfg: DictConfig):
     delta_timestamps = build_delta_timestamps(dataset_metadata, policy_cfg)
 
     image_transforms = build_augmenter(cfg.training.RGB_Augmenter)
-    dataset = LeRobotDataset(
-        cfg.repoid,
-        delta_timestamps=delta_timestamps,
-        root=cfg.root,
-        image_transforms=None,
-    )
+    if mixture_sources:
+        source_datasets = [
+            LeRobotDataset(
+                source.repo_id,
+                delta_timestamps=delta_timestamps,
+                root=source.root,
+                image_transforms=None,
+            )
+            for source in mixture_sources
+        ]
+        dataset = build_virtual_mixture(
+            source_datasets,
+            mixture_sources,
+            metadata=dataset_metadata,
+            drop_n_last_frames=int(
+                getattr(cfg.policy, "drop_n_last_frames", 0) or 0
+            ),
+        )
+    else:
+        dataset = LeRobotDataset(
+            cfg.repoid,
+            delta_timestamps=delta_timestamps,
+            root=cfg.root,
+            image_transforms=None,
+        )
     # Training loop
     aug_step = insert_before_normalizer(preprocessor, AugmentationProcessorStep(image_transforms, dataset.meta.camera_keys))  # just for training
     
-    if hasattr(cfg.policy, "drop_n_last_frames"):
+    if mixture_sources:
+        shuffle = True
+        sampler = None
+    elif hasattr(cfg.policy, "drop_n_last_frames"):
         shuffle = False
         sampler = EpisodeAwareSampler(
             dataset.meta.episodes["dataset_from_index"],
@@ -608,8 +670,15 @@ def main(cfg: DictConfig):
             # Save best model
             policy.save_pretrained(output_directory / "epochbest")
         # Save checkpoint every N epochs
-        if (epoch + 1) % cfg.training.save_freq_epoch == 0:
+        periodic_keep = int(
+            getattr(cfg.training, "keep_last_epoch_checkpoints", 0)
+        )
+        if periodic_keep > 0 and (epoch + 1) % cfg.training.save_freq_epoch == 0:
             policy.save_pretrained(output_directory / f"epoch{epoch+1}")
+            prune_periodic_epoch_checkpoints(
+                output_directory,
+                periodic_keep,
+            )
             # preprocessor.save_pretrained(output_directory)
 
         # Save last checkpoint (includes AMP scaler & progress for perfect resume)
