@@ -88,6 +88,9 @@ scripts/vast/launch_job.sh \
 resume 仓库必须包含 optimizer、processor、RNG/accelerator 或 DCP 等完整
 训练状态，只有推理用 `model.safetensors` 不足以续训。OpenPI 可以从独立
 的 resume 仓库读取完整 run，再上传到本次选择的 `MODEL_REPO`。
+交互向导中的 OpenPI 续训不要求手填 `RUN_ID`；本地目录名由 resume 仓库名
+生成，W&B 身份从仓库中的 `wandb_id.txt` 自动恢复。恢复后的全局 step
+直接进入一段无 warmup 的 LR tail，可选择保持当前 LR 或继续 cosine 衰减。
 LingBot-v1 的 resume 仓库必须保存完整
 `checkpoints/global_step_*` DCP 目录；流水线会在训练前下载到指定 run。
 

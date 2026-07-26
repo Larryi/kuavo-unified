@@ -340,6 +340,9 @@ def main() -> int:
     openpi_peak_lr = "2.5e-5"
     openpi_decay_steps = 30000
     openpi_decay_lr = "2.5e-6"
+    openpi_tail_start_step: int | None = None
+    openpi_tail_decay_steps: int | None = None
+    openpi_tail_decay_lr: str | None = None
     if yes_no("是否从 HF 完整训练状态继续训练？"):
         resume_repo = select_repositories(
             "选择或输入 resume 模型仓库",
@@ -376,7 +379,13 @@ def main() -> int:
                     )
                     break
                 print("追加训练步数必须是正整数。")
-        resume_run_id = input("输入原训练 RUN_ID（用于恢复到同一输出目录）: ").strip()
+            resume_run_id = re.sub(r"[^A-Za-z0-9._-]", "_", resume_repo.rsplit("/", 1)[-1])
+            print(
+                f"OpenPI 本地恢复目录：{resume_run_id}；"
+                "W&B run ID 将从 checkpoint 的 wandb_id.txt 自动恢复"
+            )
+        else:
+            resume_run_id = input("输入原训练 RUN_ID（用于恢复到同一输出目录）: ").strip()
         if not re.fullmatch(r"[A-Za-z0-9._-]+", resume_run_id):
             raise SystemExit("RUN_ID 只能包含字母、数字、点、下划线和连字符")
         resume_mode = "hf"
@@ -384,12 +393,45 @@ def main() -> int:
     if algorithm == "openpi":
         if openpi_target_steps is None:
             openpi_target_steps = positive_int("OpenPI 总训练步数", 30000)
-        openpi_warmup_steps = nonnegative_int("OpenPI LR warmup 步数", 1000)
-        openpi_peak_lr = nonnegative_float("OpenPI 峰值学习率", "2.5e-5")
-        openpi_decay_steps = positive_int(
-            "OpenPI cosine decay 步数", openpi_target_steps
-        )
-        openpi_decay_lr = nonnegative_float("OpenPI 最终学习率", "2.5e-6")
+        if openpi_resume_from_step is not None:
+            current_lr = nonnegative_float(
+                "OpenPI 续训起始学习率（应为原调度当前值）", "2.5e-6"
+            )
+            continue_decay = yes_no(
+                "续训期间继续降低学习率？（否则保持起始学习率不变）",
+                default=True,
+            )
+            final_lr = (
+                nonnegative_float("OpenPI 续训最终学习率", "2.5e-7")
+                if continue_decay
+                else current_lr
+            )
+            if float(final_lr) > float(current_lr):
+                raise SystemExit("续训最终学习率不能高于续训起始学习率")
+
+            # The restored optimizer already carries the global step. Build a
+            # flat one-step historical segment and start a fresh cosine tail at
+            # that global step; no second warmup is performed.
+            openpi_warmup_steps = 0
+            openpi_peak_lr = current_lr
+            openpi_decay_steps = 1
+            openpi_decay_lr = current_lr
+            openpi_tail_start_step = openpi_resume_from_step
+            openpi_tail_decay_steps = openpi_resume_additional_steps
+            openpi_tail_decay_lr = final_lr
+            mode = "cosine 衰减" if continue_decay else "常数"
+            print(
+                f"OpenPI 续训 LR：无 warmup，step {openpi_resume_from_step} "
+                f"起从 {current_lr} 以{mode}运行至 step {openpi_target_steps}"
+                f"（最终 {final_lr}）"
+            )
+        else:
+            openpi_warmup_steps = nonnegative_int("OpenPI LR warmup 步数", 1000)
+            openpi_peak_lr = nonnegative_float("OpenPI 峰值学习率", "2.5e-5")
+            openpi_decay_steps = positive_int(
+                "OpenPI cosine decay 步数", openpi_target_steps
+            )
+            openpi_decay_lr = nonnegative_float("OpenPI 最终学习率", "2.5e-6")
 
     wandb_key = secret_or_saved(
         "W&B API key（可留空）", "WANDB_API_KEY", saved_credentials
@@ -450,6 +492,14 @@ def main() -> int:
                 "DECAY_LR": openpi_decay_lr,
             }
         )
+        if openpi_tail_start_step is not None:
+            values.update(
+                {
+                    "LR_TAIL_START_STEP": str(openpi_tail_start_step),
+                    "LR_TAIL_DECAY_STEPS": str(openpi_tail_decay_steps),
+                    "LR_TAIL_DECAY_LR": str(openpi_tail_decay_lr),
+                }
+            )
         if openpi_resume_from_step is not None:
             values.update(
                 {
@@ -502,6 +552,9 @@ def main() -> int:
                 "peak_lr": openpi_peak_lr,
                 "lr_decay_steps": openpi_decay_steps,
                 "decay_lr": openpi_decay_lr,
+                "lr_tail_start_step": openpi_tail_start_step,
+                "lr_tail_decay_steps": openpi_tail_decay_steps,
+                "lr_tail_decay_lr": openpi_tail_decay_lr,
             }
             if algorithm == "openpi"
             else None

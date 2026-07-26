@@ -428,8 +428,10 @@ bash scripts/vast/restore_and_launch.sh
 
 OpenPI 会明确询问总训练步数、warmup 步数、峰值学习率、cosine decay
 步数和最终学习率。当前默认值依次为
-`30000 / 1000 / 2.5e-5 / 30000 / 2.5e-6`。续训时总步数按
-“已完成 step + 用户输入的追加步数”计算。GPU 预检默认不限定 A100 或
+`30000 / 1000 / 2.5e-5 / 30000 / 2.5e-6`。这些问题只用于新训练。
+续训时总步数按“已完成 step + 用户输入的追加步数”计算，不再执行或询问
+warmup；用户选择从当前 LR 继续 cosine 衰减，或者保持当前 LR 为常数。
+GPU 预检默认不限定 A100 或
 任何具体型号，仍检查 CUDA、GPU 数量和最低显存；仅在用户显式设置
 `REQUIRE_GPU_NAME` 时才限制型号。
 
@@ -509,7 +511,14 @@ HF token 至少要有：读取所选私有 dataset、读取所需基模/resume �
 
 ### 5.4 从完整状态接续训练
 
-在 resume 问题处选择 `y`，再选择 HF model repo 并输入原始 `RUN_ID`。
+在 resume 问题处选择 `y`，再选择 HF model repo。OpenPI 无需输入原始
+`RUN_ID`：向导用仓库名生成本地恢复目录，而真正的 W&B run ID 会从完整
+checkpoint 中的 `wandb_id.txt` 自动读取。其他算法仍可能要求原始
+`RUN_ID`，用于恢复各自训练器约定的目录。
+
+OpenPI 恢复 optimizer、全局 step 和其他完整状态后，不会再次 warmup。
+向导询问续训起始 LR（应填写原调度在当前 step 的实际值，默认
+`2.5e-6`），然后选择保持常数或在追加步数内继续 cosine 衰减至目标值。
 仓库必须包含对应 trainer 的完整状态：
 
 | algorithm | 至少需要的状态标记 |

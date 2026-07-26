@@ -308,6 +308,15 @@ def test_resume_run_directory_does_not_double_prefix_run_id() -> None:
     assert 'run_dir="${output_base}/run_${RESUME_RUN_ID}"' not in text
 
 
+def test_openpi_resume_uses_checkpoint_wandb_id_and_lr_tail() -> None:
+    text = (ROOT / "tools" / "vast_job_wizard.py").read_text(encoding="utf-8")
+    assert "W&B run ID 将从 checkpoint 的 wandb_id.txt 自动恢复" in text
+    assert 'openpi_warmup_steps = 0' in text
+    assert '"LR_TAIL_START_STEP": str(openpi_tail_start_step)' in text
+    assert '"LR_TAIL_DECAY_STEPS": str(openpi_tail_decay_steps)' in text
+    assert '"LR_TAIL_DECAY_LR": str(openpi_tail_decay_lr)' in text
+
+
 def test_status_reader_is_bounded_and_reports_gpu() -> None:
     text = STATUS.read_text(encoding="utf-8")
     assert 'TAIL_LINES:=30' in text
