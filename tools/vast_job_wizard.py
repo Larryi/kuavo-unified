@@ -25,7 +25,7 @@ JOB_MATRIX = {
     "act": ("task3",),
 }
 RESUME_MARKERS = {
-    "openpi": ("params/_METADATA",),
+    "openpi": ("_CHECKPOINT_METADATA",),
     "lingbot-v1": ("checkpoints/global_step_",),
     "dp": ("learning_state.pth", "epochlatest/", "training_latest_state.pth"),
     "act": ("learning_state.pth", "epochlatest/", "training_latest_state.pth"),
@@ -64,6 +64,22 @@ def normalize_dataset_mix(repo_ids: list[str], weights: list[float]) -> list[Dat
 def resume_repo_has_training_state(algorithm: str, files: Iterable[str]) -> bool:
     markers = RESUME_MARKERS[algorithm]
     return any(any(marker in path for marker in markers) for path in files)
+
+
+def latest_openpi_checkpoint_step(files: Iterable[str]) -> int | None:
+    """Return the newest finalized Orbax step uploaded at any repo prefix."""
+    steps: list[int] = []
+    for name in files:
+        parts = name.strip("/").split("/")
+        if "_CHECKPOINT_METADATA" not in parts:
+            continue
+        marker_index = parts.index("_CHECKPOINT_METADATA")
+        steps.extend(
+            int(part)
+            for part in parts[:marker_index]
+            if part.isdigit()
+        )
+    return max(steps) if steps else None
 
 
 def choose(prompt: str, values: list[str]) -> str:
@@ -263,6 +279,9 @@ def main() -> int:
     resume_mode = "none"
     resume_repo = ""
     resume_run_id = ""
+    openpi_resume_from_step: int | None = None
+    openpi_resume_additional_steps: int | None = None
+    openpi_target_steps: int | None = None
     if yes_no("是否从 HF 完整训练状态继续训练？"):
         resume_repo = select_repositories(
             "选择或输入 resume 模型仓库",
@@ -275,6 +294,30 @@ def main() -> int:
             raise SystemExit(
                 f"仓库 {resume_repo} 未找到 {algorithm} 完整训练状态标记：{markers}"
             )
+        if algorithm == "openpi":
+            openpi_resume_from_step = latest_openpi_checkpoint_step(files)
+            if openpi_resume_from_step is None:
+                raise SystemExit(
+                    f"仓库 {resume_repo} 中无法确定最新 OpenPI Orbax step"
+                )
+            while True:
+                raw = input(
+                    f"检测到最新 OpenPI step={openpi_resume_from_step}；"
+                    "追加训练多少步？ [10000]: "
+                ).strip() or "10000"
+                if raw.isdigit() and int(raw) > 0:
+                    openpi_resume_additional_steps = int(raw)
+                    openpi_target_steps = (
+                        openpi_resume_from_step + openpi_resume_additional_steps
+                    )
+                    print(
+                        "OpenPI 续训目标："
+                        f"{openpi_resume_from_step} + "
+                        f"{openpi_resume_additional_steps} = "
+                        f"{openpi_target_steps} total steps"
+                    )
+                    break
+                print("追加训练步数必须是正整数。")
         resume_run_id = input("输入原训练 RUN_ID（用于恢复到同一输出目录）: ").strip()
         if not re.fullmatch(r"[A-Za-z0-9._-]+", resume_run_id):
             raise SystemExit("RUN_ID 只能包含字母、数字、点、下划线和连字符")
@@ -325,6 +368,16 @@ def main() -> int:
     }
     if algorithm == "openpi":
         values.update({"PIPELINE_MODE": "train", "CONFIRM_FULL_TRAIN": "YES"})
+        if openpi_target_steps is not None:
+            values.update(
+                {
+                    "NUM_TRAIN_STEPS": str(openpi_target_steps),
+                    "OPENPI_RESUME_FROM_STEP": str(openpi_resume_from_step),
+                    "OPENPI_RESUME_ADDITIONAL_STEPS": str(
+                        openpi_resume_additional_steps
+                    ),
+                }
+            )
 
     env_path = Path(args.output_env)
     env_path.parent.mkdir(parents=True, exist_ok=True)
@@ -341,6 +394,9 @@ def main() -> int:
             "mode": resume_mode,
             "repo": resume_repo or None,
             "run_id": resume_run_id or None,
+            "from_step": openpi_resume_from_step,
+            "additional_steps": openpi_resume_additional_steps,
+            "target_total_steps": openpi_target_steps,
         },
         "gpu_ids": gpu_ids,
         "auto_stop": auto_stop == "1",

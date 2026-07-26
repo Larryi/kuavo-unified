@@ -15,6 +15,7 @@ from tools.vast_bootstrap import (
 )
 from tools.vast_job_wizard import (
     JOB_MATRIX,
+    latest_openpi_checkpoint_step,
     normalize_dataset_mix,
     resume_repo_has_training_state,
     select_training_datasets,
@@ -347,7 +348,8 @@ def test_openpi_dataset_selection_adds_sources_one_by_one(monkeypatch) -> None:
 @pytest.mark.parametrize(
     ("algorithm", "files", "expected"),
     [
-        ("openpi", ["10000/params/_METADATA"], True),
+        ("openpi", ["10000/_CHECKPOINT_METADATA"], True),
+        ("openpi", ["10000/params/_METADATA"], False),
         ("lingbot-v1", ["checkpoints/global_step_15000/.metadata"], True),
         ("dp", ["learning_state.pth"], True),
         ("act", ["model.safetensors"], False),
@@ -359,6 +361,15 @@ def test_resume_repository_state_detection(
     expected: bool,
 ) -> None:
     assert resume_repo_has_training_state(algorithm, files) is expected
+
+
+def test_latest_openpi_checkpoint_step_uses_finalized_step_marker() -> None:
+    files = [
+        "checkpoints/pi05_kuavo/run_a/9000/_CHECKPOINT_METADATA",
+        "checkpoints/pi05_kuavo/run_a/10000/_CHECKPOINT_METADATA",
+        "checkpoints/pi05_kuavo/run_a/11000/params/_METADATA",
+    ]
+    assert latest_openpi_checkpoint_step(files) == 10000
 
 
 @pytest.mark.parametrize(
