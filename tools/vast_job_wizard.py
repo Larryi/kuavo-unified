@@ -343,6 +343,7 @@ def main() -> int:
     openpi_tail_start_step: int | None = None
     openpi_tail_decay_steps: int | None = None
     openpi_tail_decay_lr: str | None = None
+    openpi_wandb_run_id = ""
     if yes_no("是否从 HF 完整训练状态继续训练？"):
         resume_repo = select_repositories(
             "选择或输入 resume 模型仓库",
@@ -380,10 +381,21 @@ def main() -> int:
                     break
                 print("追加训练步数必须是正整数。")
             resume_run_id = re.sub(r"[^A-Za-z0-9._-]", "_", resume_repo.rsplit("/", 1)[-1])
-            print(
-                f"OpenPI 本地恢复目录：{resume_run_id}；"
-                "W&B run ID 将从 checkpoint 的 wandb_id.txt 自动恢复"
-            )
+            if any(path.rsplit("/", 1)[-1] == "wandb_id.txt" for path in files):
+                print(
+                    f"OpenPI 本地恢复目录：{resume_run_id}；"
+                    "W&B run ID 将从 checkpoint 的 wandb_id.txt 自动恢复"
+                )
+            else:
+                print(f"OpenPI 本地恢复目录：{resume_run_id}")
+                openpi_wandb_run_id = input(
+                    "checkpoint 未包含 wandb_id.txt；输入原 W&B run ID"
+                    "（如 676c1tbp，留空则创建新 run）: "
+                ).strip()
+                if openpi_wandb_run_id and not re.fullmatch(
+                    r"[A-Za-z0-9_-]+", openpi_wandb_run_id
+                ):
+                    raise SystemExit("W&B run ID 只能包含字母、数字、下划线和连字符")
         else:
             resume_run_id = input("输入原训练 RUN_ID（用于恢复到同一输出目录）: ").strip()
         if not re.fullmatch(r"[A-Za-z0-9._-]+", resume_run_id):
@@ -463,7 +475,7 @@ def main() -> int:
         "DATASET_REPO": mixture[0].repo_id,
         "DATASET_MIX_JSON": json.dumps(mix_payload, separators=(",", ":")),
         "MODEL_REPO": output_repo,
-        "MODEL_REPO_PRIVATE": "1",
+        "MODEL_REPO_PRIVATE": "0",
         "RESUME_MODE": resume_mode,
         "RESUME_REPO": resume_repo,
         "RESUME_RUN_ID": resume_run_id,
@@ -483,6 +495,8 @@ def main() -> int:
     }
     if algorithm == "openpi":
         values.update({"PIPELINE_MODE": "train", "CONFIRM_FULL_TRAIN": "YES"})
+        if openpi_wandb_run_id:
+            values["WANDB_RUN_ID"] = openpi_wandb_run_id
         values.update(
             {
                 "NUM_TRAIN_STEPS": str(openpi_target_steps),

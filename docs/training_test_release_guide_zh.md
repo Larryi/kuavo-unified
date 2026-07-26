@@ -513,7 +513,9 @@ HF token 至少要有：读取所选私有 dataset、读取所需基模/resume �
 
 在 resume 问题处选择 `y`，再选择 HF model repo。OpenPI 无需输入原始
 `RUN_ID`：向导用仓库名生成本地恢复目录，而真正的 W&B run ID 会从完整
-checkpoint 中的 `wandb_id.txt` 自动读取。其他算法仍可能要求原始
+checkpoint 中的 `wandb_id.txt` 自动读取。若旧仓库没有该文件，向导允许
+输入形如 `676c1tbp` 的原 W&B run ID；留空则为续训创建新的 W&B run，
+不会阻止模型状态恢复。其他算法仍可能要求原始
 `RUN_ID`，用于恢复各自训练器约定的目录。
 
 OpenPI 恢复 optimizer、全局 step 和其他完整状态后，不会再次 warmup。
@@ -531,6 +533,10 @@ OpenPI 恢复 optimizer、全局 step 和其他完整状态后，不会再次 wa
 只有部署用 `hf_ckpt`、`model.safetensors`、`epochbest` 或 OpenPI 的
 `params` 子目录不足以无损续训。向导先检查 HF 文件清单，再把完整 run
 恢复到训练器预期目录；续训仍可把结果上传到另一个 `MODEL_REPO`。
+模型输出仓库默认创建/设置为公开；确需私有时可在生成的 env 中显式设置
+`MODEL_REPO_PRIVATE=1`。上传 checkpoint 时会排除本地
+`.cache/huggingface/**` 元数据，避免 `upload_large_folder` 递归读取自身
+缓存。
 
 ### 5.5 启动确认、状态、通知与关机
 
