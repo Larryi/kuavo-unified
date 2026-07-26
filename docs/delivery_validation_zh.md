@@ -40,8 +40,8 @@ OpenPI 使用 [openpi_workflow_zh.md](openpi_workflow_zh.md)。每种模型先�
 - chunk horizon、首动作与 queue 模式时间对齐；
 - viewer 中原始动作和限速/边界平滑后的动作均可解释。
 
-DP/ACT 是基础门禁，但优先级低于最终交付的 OpenPI 和 LingBot-v1。
-LingBot-v2 自 2026-07-25 起由操作者明确暂缓，不进入当前验收序列。
+DP/ACT 是基础门禁。LingBot-v2 已于 2026-07-26 恢复适配，当前进入
+“环境/路由已实现、等待真实权重 open-loop/ROS mock”的验收阶段。
 
 ## 3. 隔离 worker 与协议
 
@@ -117,15 +117,18 @@ DP/ACT 可复用同一 client YAML。每次只启动一个 worker，
   为 0.0276 rad、关节 MAE 为 0.0927 rad、全 50-step horizon 越界率
   为 12.08%。进入真机前仍需在 Viewer 审核越界集中位置，并保持首次
   `client_execute_steps: 1`；
-- LingBot-v2：按操作者决定暂缓，不进入当前交付完成度。
+- LingBot-v2：云端训练路径已恢复；ROS Noetic 基础镜像已完成 focal
+  源码 FlashAttention 构建，并通过 RTX 3090、Torch CUDA、
+  KuavoBaseEnv 导入。真实权重 open-loop/ROS mock 尚未执行。
 
 ```bash
 MODEL_BACKEND=openpi DRY_RUN=1 scripts/vast/launch.sh
 MODEL_BACKEND=lingbot-v1 DRY_RUN=1 scripts/vast/launch.sh
+MODEL_BACKEND=lingbot-v2 TRAINING_TASK=task2 DRY_RUN=1 scripts/vast/launch.sh
 ```
 
-LingBot-v2 云端、镜像和推理验收均暂缓；统一入口保留其已有路由，但当前
-不应将其运行结果计入交付完成度。
+LingBot-v2 只有在真实 checkpoint、CUDA worker、ROS mock 三项均通过后
+才计入交付完成度。
 
 真实云端运行前逐项确认代码同步目标、数据集仓库、预训练权重清单和挂载
 位置，以及 HF/W&B/ServerChan/Vast token 仅存在于权限 600 的私有 env

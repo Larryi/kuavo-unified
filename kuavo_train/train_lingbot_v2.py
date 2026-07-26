@@ -87,6 +87,15 @@ def main(cfg: DictConfig) -> None:
     global_batch = micro_batch * accumulation * world_size
     model_path = Path(str(policy_cfg.model_path))
     tokenizer_path = Path(str(policy_cfg.tokenizer_path))
+    required_model_files = ("config.json", "model.safetensors.index.json")
+    missing_model_files = [
+        name for name in required_model_files if not (model_path / name).is_file()
+    ]
+    if missing_model_files:
+        missing = ", ".join(missing_model_files)
+        raise FileNotFoundError(
+            f"Incomplete LingBot-v2 base model at {model_path}; missing: {missing}"
+        )
     required_tokenizer_files = ("config.json", "tokenizer_config.json", "tokenizer.json")
     missing_tokenizer_files = [
         name for name in required_tokenizer_files if not (tokenizer_path / name).is_file()
@@ -114,6 +123,8 @@ def main(cfg: DictConfig) -> None:
         "--model.tokenizer_path",
         str(tokenizer_path),
     ]
+    if norm_stats := os.getenv("LINGBOT_V2_NORM_STATS", "").strip():
+        extra_args.extend(["--data.norm_stats_file", norm_stats])
     extra_args.extend(_optional_asset_args())
     extra_args.extend(str(item) for item in policy_cfg.get("extra_args", []))
 

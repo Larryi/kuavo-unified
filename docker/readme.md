@@ -96,13 +96,15 @@ reinstall their pinned source copies after unpacking.
 
 Create v2 from the pinned v2 submodule. Do not reuse `lerobot_hil`: its Python
 version is suitable, but its PyTorch version does not match LingBot-v2. The
-archive must be compatible with the final Classic/ROS Ubuntu 20.04 image.
-On glibc 2.31, the wrapper builds flash-attn from source and therefore requires
-`nvcc`; on glibc >= 2.32 it selects the exact official wheel. Override this
-choice with `FLASH_ATTN_INSTALL_MODE=source|wheel`:
+archive may use the exact official wheel on a newer training host. The final
+Docker build always removes it and rebuilds flash-attn in a CUDA 12.8 /
+Ubuntu 20.04 builder, so the deployed extension is compatible with glibc 2.31.
+For an archive used only by that Docker build, select `defer` to avoid compiling
+twice. A directly runnable training environment must use `auto`, `source`, or
+`wheel`:
 
 ```bash
-docker/create_lingbot_v2_env.sh
+FLASH_ATTN_INSTALL_MODE=defer docker/create_lingbot_v2_env.sh
 
 conda-pack \
   -n lingbotvla_v2 \
@@ -110,10 +112,20 @@ conda-pack \
   -o /mnt/pqssd/docker_envs/lingbot-v2/myenv.tar.gz
 ```
 
-The v2 setup script verifies `torch.cuda.is_available()`, so the builder also
-needs GPU passthrough. Driver 575.57.08/CUDA 12.9 is sufficient for the target
-Torch CUDA runtime. Do not package an Ubuntu 22-only environment for the
-Classic/ROS delivery image.
+`defer` is not valid for training: it intentionally leaves FlashAttention
+absent until `Dockerfile.lingbot_v2` compiles and installs it.
+
+The v2 setup script normally verifies `torch.cuda.is_available()`. For creating
+an archive on a machine where the GPU is intentionally hidden from the build
+process, set `LINGBOT_V2_REQUIRE_CUDA_AVAILABLE=0`; it still requires a
+CUDA-enabled Torch build. Driver 575.57.08/CUDA 12.9 is sufficient for actual
+training.
+
+The 2026-07-26 focal build produced flash-attn 2.8.3 with a newest referenced
+symbol of `GLIBC_2.14`; the final glibc 2.31 image imported it on an RTX 3090
+alongside ROS Noetic and `KuavoBaseEnv`. Preserve the base image/build cache:
+the first general-architecture CUDA source build can take about one hour, while
+task/checkpoint release layers do not rebuild it.
 
 Select flash-attn from the actual Torch runtime, not from the maximum CUDA
 version printed by `nvidia-smi`. The resolver checks Python, the Torch
@@ -192,6 +204,9 @@ docker/build_openpi.sh
 ```
 
 Add `DRY_RUN=1` to any command to inspect it without building.
+The v2 build uses `nvidia/cuda:12.8.1-devel-ubuntu20.04` only as a compiler
+stage and validates the generated wheel's GLIBC symbols before copying
+`/opt/kuavo-env` into the ROS Noetic final image.
 
 The Classic build verifies and embeds the official
 `resnet18-f37072fd.pth` in Torch's checkpoint cache, so ACT inference does not

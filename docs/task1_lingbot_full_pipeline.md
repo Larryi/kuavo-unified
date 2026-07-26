@@ -88,7 +88,7 @@ Important overrides:
 | `LEARNING_RATE` | 2e-5 | Full-model peak learning rate |
 | `SAVE_STEPS` | 500 | Maximum work lost after interruption |
 | `KEEP_LAST_CHECKPOINTS` | 1 | Complete DCP checkpoints retained |
-| `USE_COMPILE` | false | Enable only after an eager smoke test |
+| `USE_COMPILE` | true | Enabled by default; set false only for diagnosis |
 | `MIN_FREE_GB` | 120 | Startup disk-space guard |
 | `AUTO_STOP_INSTANCE` | 1 | Stop the Vast instance after any pipeline exit |
 | `VAST_INSTANCE_ID` | auto | Override the ID inferred from hostname `C.<id>` |

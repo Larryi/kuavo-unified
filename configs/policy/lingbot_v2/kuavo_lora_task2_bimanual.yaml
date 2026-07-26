@@ -75,8 +75,9 @@ train:
   max_steps: 10000
   ckpt_manager: dcp
   save_steps: 5000
+  keep_last_checkpoints: 1
   save_epochs: 10000
-  save_hf_weights: false
+  save_hf_weights: true
   async_save_hf_weights: false
   enable_fp32: true
   action_fp32: true

@@ -8,7 +8,7 @@
 | Task1 | LingBot-VLA v1 | 支持 | 支持 | 支持 |
 | Task2 | DP | 支持 | 支持 | 支持 |
 | Task3 | ACT | 支持 | 支持 | 支持 |
-| 任意 | LingBot-VLA v2 | 暂缓 | 暂缓 | 不进入当前流程 |
+| Task2 | LingBot-VLA v2 | 支持（待真实云端训练验收） | 支持（待真实权重/ROS 验收） | 支持 |
 
 “多数据集混合”使用虚拟加权采样，不复制或合并源数据。
 各源必须具有相同机器人 embodiment、FPS、state/action schema 和相机键。
@@ -155,8 +155,8 @@ weighted sampler 重新计算，并以 mixture hash 隔离缓存，避免误用�
 ```
 
 resolved manifest 会保留每个 HF repo、本地 root 和归一化权重。训练时
-均从该清单读取，不支持用逗号拼接路径。LingBot-v2 仍暂缓且只允许一个
-数据集。
+均从该清单读取，不支持用逗号拼接路径。LingBot-v2 使用 Task2 bimanual
+schema，并按同一虚拟混合分布重新计算 norm stats。
 
 ## 四、预训练权重和 resume
 
@@ -185,6 +185,7 @@ resume 仓库必须是完整训练状态，不是部署权重：
 |---|---|---|
 | OpenPI | 每 `SAVE_INTERVAL=1000` step | Orbax `max_to_keep=1`；云端 `KEEP_PERIOD` 设为极大值，正常只保留最新完整 step |
 | LingBot-v1 | 每 `SAVE_STEPS=500` step | `KEEP_LAST_CHECKPOINTS=1`，只保留最新完整 DCP；结束后另导出部署 HF checkpoint，并把两者上传到同一模型仓库 |
+| LingBot-v2 | Task2 默认每 5000 step | `keep_last_checkpoints=1`，只保留最新完整 DCP；同时生成已合并 LoRA 的完整 `hf_ckpt` |
 | DP/ACT | 每个 epoch 覆盖 latest resume；验证更优时更新 `epochbest` | 默认 `keep_last_epoch_checkpoints=0`，不生成重复 `epochN`；latest 模型/训练状态只留一份，`epochbest` 作为部署候选分开保留 |
 
 LingBot-v1 会把最新 DCP 上传到模型仓库的 `checkpoints/global_step_*`，

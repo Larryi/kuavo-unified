@@ -41,10 +41,10 @@ def test_backend_routes_share_classic_without_merging_runtimes() -> None:
     assert BACKENDS["openpi"].image == "kuavo-openpi:latest"
     assert BACKENDS["openpi"].tokenizer_required
     assert BACKENDS["lingbot-v1"].qwen_required
-    assert BACKENDS["lingbot-v2"].delivery_paused
     assert BACKENDS["lingbot-v2"].image == "kuavo-lingbot-v2:latest"
     assert TASKS["task2-dp"].config.endswith("kuavo_env.dp.task2.yaml")
     assert TASKS["task3-act"].config.endswith("kuavo_env.act.task3.yaml")
+    assert TASKS["task2-lingbot-v2"].backend == "lingbot-v2"
 
 
 def test_qwen_processor_bundle_does_not_require_base_weights(tmp_path: Path) -> None:
@@ -246,7 +246,7 @@ def test_release_uses_bounded_build_log(tmp_path: Path) -> None:
     assert not build_log.exists()
 
 
-def test_lingbot_v2_delivery_is_blocked_while_paused(tmp_path: Path) -> None:
+def test_lingbot_v2_delivery_shell_is_available(tmp_path: Path) -> None:
     checkpoint = tmp_path / "hf_ckpt"
     checkpoint.mkdir()
     (checkpoint / "model.safetensors").write_bytes(b"weights")
@@ -270,8 +270,9 @@ def test_lingbot_v2_delivery_is_blocked_while_paused(tmp_path: Path) -> None:
         capture_output=True,
         check=False,
     )
-    assert result.returncode == 2
-    assert "交付适配已按操作者决定暂缓" in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert "--entrypoint bash kuavo-lingbot-v2:latest" in result.stdout
+    assert f"{checkpoint.resolve()}:/models/checkpoint:ro" in result.stdout
 
 
 def test_backend_task_mismatch_is_rejected(tmp_path: Path) -> None:

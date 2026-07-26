@@ -16,12 +16,14 @@ ACT、DP、LingBot-v1、LingBot-v2 或 OpenPI。所有操作也支持完整命�
 |---|---|---|
 | `task1-openpi` | `openpi` | Task1 右臂 + Leju 夹爪 |
 | `task1-lingbot-v1` | `lingbot-v1` | Task1 右臂 + Leju 夹爪、旧权重绝对动作 |
+| `task2-lingbot-v2` | `lingbot-v2` | Task2 双臂 + 双 Leju 夹爪 + 三相机 |
 | `task2-dp` | `dp` | Task2 双臂 + 双 Leju 夹爪 + 三相机 |
 | `task3-act` | `act` | Task3 右臂 + Qiangnao 末端 |
 
 每个 backend 都有上述唯一默认任务，也建议在自动化命令中显式写出
 `--task`。自定义 `--config` 只能覆盖同一模型/任务的细节，不能绕过任务
-绑定。LingBot-v2 当前暂缓，CLI 会阻止其 `shell` 和 `release`。
+绑定。LingBot-v2 的 `shell` 和 `release` 已开放，但真实权重和真机 ROS
+验收仍是发布门禁。
 
 ## 安全边界
 
@@ -99,7 +101,14 @@ OpenPI 复用已经构建的 `kuavo-classic:latest`：
 scripts/kuavo_docker build --backend openpi
 ```
 
-LingBot-v2 环境与最终镜像适配已按操作者决定暂缓，不属于本轮交付。
+LingBot-v2 基础镜像：
+
+```bash
+scripts/kuavo_base_image \
+  --backend lingbot-v2 \
+  --build \
+  --env-archive /mnt/pqssd/docker_envs/lingbot-v2/myenv.tar.gz
+```
 
 ## 测试阶段：只读挂载并进入 shell
 

@@ -27,11 +27,12 @@ docker/build_openpi.sh  # 要求本地已有 kuavo-classic:latest
 ```
 
 LingBot-v2 的归档必须由其上游 `tools/create_train_env.sh` 创建的
-Python 3.12 / PyTorch 2.8 环境生成，并与 Classic/ROS 的 glibc 2.31
-兼容。`docker/create_lingbot_v2_env.sh` 在该系统上从源码构建
-flash-attn（需要 CUDA toolkit/nvcc），在兼容 glibc 的新系统上才使用
-精确匹配的官方 wheel。构建脚本通过 BuildKit named context 读取归档，
-归档不进入源码 context。可先用 `DRY_RUN=1` 检查完整命令。
+Python 3.12 / PyTorch 2.8 环境生成。训练机可使用与其 glibc 兼容的官方
+wheel；最终镜像不会直接信任该 wheel。`Dockerfile.lingbot_v2` 会在
+`nvidia/cuda:12.8.1-devel-ubuntu20.04` builder 中强制从源码重建
+flash-attn 2.8.3，检查 wheel 的最高 GLIBC symbol，再把环境复制到
+ROS Noetic/Ubuntu 20.04 最终镜像。归档通过 BuildKit named context
+读取，不进入源码 context。
 
 OpenPI 使用固定子模块的 `uv.lock`，通过独立 BuildKit context 导入
 源码；最终镜像以 `kuavo-classic:latest` 为基础，增加 OpenPI uv 环境

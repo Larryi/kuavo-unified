@@ -22,12 +22,14 @@ JOB_MATRIX = {
     "lingbot-v1": "task1",
     "dp": "task2",
     "act": "task3",
+    "lingbot-v2": "task2",
 }
 RESUME_MARKERS = {
     "openpi": ("params/_METADATA",),
     "lingbot-v1": ("checkpoints/global_step_",),
     "dp": ("learning_state.pth", "epochlatest/", "training_latest_state.pth"),
     "act": ("learning_state.pth", "epochlatest/", "training_latest_state.pth"),
+    "lingbot-v2": ("checkpoints/global_step_",),
 }
 REPO_ID = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
 
@@ -223,7 +225,9 @@ def main() -> int:
     print(f"HF 身份验证成功：{identity['name']}")
 
     datasets = list_owned_repositories(api, identity, repo_type="dataset")
-    allow_multiple = algorithm in {"openpi", "dp", "act", "lingbot-v1"}
+    allow_multiple = algorithm in {
+        "openpi", "dp", "act", "lingbot-v1", "lingbot-v2"
+    }
     selected = select_training_datasets(
         datasets,
         allow_multiple=allow_multiple,

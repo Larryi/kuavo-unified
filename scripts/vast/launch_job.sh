@@ -19,7 +19,7 @@ usage() {
 Usage:
   scripts/vast/launch_job.sh \
     --task task1|task2|task3 \
-    --algorithm openpi|lingbot-v1|dp|act \
+    --algorithm openpi|lingbot-v1|lingbot-v2|dp|act \
     --env-file /secure/job.env \
     --host VAST_HOST --port VAST_PORT
     [--resume-repo owner/full-checkpoint-repo --resume-run-id RUN_ID]
@@ -27,7 +27,7 @@ Usage:
 
 Each invocation binds one VastAI instance to exactly one task and algorithm.
 The private env file supplies HF_TOKEN, DATASET_REPO, MODEL_REPO, W&B,
-ServerChan and Vast credentials. LingBot-v2 is intentionally paused.
+ServerChan and Vast credentials.
 EOF
 }
 

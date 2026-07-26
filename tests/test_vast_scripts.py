@@ -203,7 +203,7 @@ def test_launcher_rejects_mismatched_task_backend_before_network() -> None:
     assert "Unsupported VastAI task/backend pair" in result.stderr
 
 
-def test_lingbot_v2_cloud_job_is_paused() -> None:
+def test_lingbot_v2_cloud_job_dry_run_is_available() -> None:
     result = subprocess.run(
         [str(LAUNCHER)],
         cwd=ROOT,
@@ -217,8 +217,9 @@ def test_lingbot_v2_cloud_job_is_paused() -> None:
         capture_output=True,
         check=False,
     )
-    assert result.returncode == 2
-    assert "cloud training integration is paused" in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert "Backend: lingbot-v2" in result.stdout
+    assert "Task: task2" in result.stdout
 
 
 def test_job_launcher_dry_run_describes_resume_without_network() -> None:
@@ -439,3 +440,14 @@ def test_lingbot_v2_cloud_assets_override_developer_paths() -> None:
         "--train.align_params.video.config_path",
         "/workspace/models/v2/dino/config.yaml",
     ]
+
+
+def test_lingbot_cloud_downloads_qwen_processor_without_base_weights() -> None:
+    runner = REMOTE_RUNNER.read_text(encoding="utf-8")
+    v1_pipeline = (
+        ROOT / "scripts/run_task1_lingbot_full_pipeline.sh"
+    ).read_text(encoding="utf-8")
+    assert "download_hf_processor" in runner
+    assert '"*processor_config.json"' in runner
+    assert '"model-*.safetensors"' not in runner
+    assert '--include \\\n        "config.json"' in v1_pipeline

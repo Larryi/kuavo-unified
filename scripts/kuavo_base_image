@@ -15,7 +15,7 @@ Usage:
       [--env-archive /path/to/myenv.tar.gz]
       [--save-tar /path/to/base-image.tar] [--dry-run]
 
-BACKEND: dp, act, openpi, lingbot-v1
+BACKEND: dp, act, openpi, lingbot-v1, lingbot-v2
 By default this only verifies/prints the existing base image. --build rebuilds
 the environment image. TAR export is opt-in through --save-tar.
 EOF
@@ -50,11 +50,12 @@ case "${BACKEND}" in
         ARCHIVE_VAR="LINGBOT_ENV_ARCHIVE"
         ;;
     lingbot-v2)
-        echo "LingBot-v2 delivery is paused." >&2
-        exit 2
+        IMAGE="kuavo-lingbot-v2:latest"
+        BUILD_SCRIPT="${ROOT}/docker/build_lingbot_v2.sh"
+        ARCHIVE_VAR="LINGBOT_V2_ENV_ARCHIVE"
         ;;
     *)
-        echo "--backend must be dp, act, openpi, or lingbot-v1" >&2
+        echo "--backend must be dp, act, openpi, lingbot-v1, or lingbot-v2" >&2
         exit 2
         ;;
 esac

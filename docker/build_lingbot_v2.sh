@@ -2,10 +2,13 @@
 set -euo pipefail
 
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-readonly EXPECTED_LINGBOT_V2_COMMIT="a5c2338536ac582af48d0669db1edcf5124fb6b1"
+readonly EXPECTED_LINGBOT_V2_COMMIT="0f48206a34d3bd24454f0cc2671397a1c9065d4b"
 IMAGE_NAME="${IMAGE_NAME:-kuavo-lingbot-v2}"
 CLASSIC_BASE_IMAGE="${CLASSIC_BASE_IMAGE:-kuavo-classic:latest}"
 ENV_ARCHIVE="${LINGBOT_V2_ENV_ARCHIVE:-}"
+CUDA_BUILDER_IMAGE="${LINGBOT_V2_CUDA_BUILDER_IMAGE:-nvidia/cuda:12.8.1-devel-ubuntu20.04}"
+FLASH_ATTN_VERSION="${FLASH_ATTN_VERSION:-2.8.3}"
+FLASH_ATTN_MAX_JOBS="${FLASH_ATTN_MAX_JOBS:-4}"
 BUILD_LOG="${BUILD_LOG:-/tmp/${IMAGE_NAME}.build.log}"
 DRY_RUN="${DRY_RUN:-0}"
 
@@ -39,7 +42,11 @@ build_command=(
     --load
     --progress=plain
     --build-arg "CLASSIC_BASE_IMAGE=${CLASSIC_BASE_IMAGE}"
+    --build-arg "LINGBOT_V2_CUDA_BUILDER_IMAGE=${CUDA_BUILDER_IMAGE}"
+    --build-arg "FLASH_ATTN_VERSION=${FLASH_ATTN_VERSION}"
+    --build-arg "FLASH_ATTN_MAX_JOBS=${FLASH_ATTN_MAX_JOBS}"
     --build-context "lingbot_v2_env=${ENV_CONTEXT}"
+    --build-context "lingbot_v2_source=${REPO_ROOT}/third_party/lingbot-vla-v2"
     -f "${REPO_ROOT}/Dockerfile.lingbot_v2"
     -t "${IMAGE_NAME}:latest"
     "${REPO_ROOT}"

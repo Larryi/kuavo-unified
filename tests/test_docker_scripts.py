@@ -209,3 +209,31 @@ def test_lingbot_v2_env_dry_run_resolves_wheel_after_torch() -> None:
     assert result.stdout.index("torch==2.8.0") < result.stdout.index("flash_attn_wheel.py")
     assert "--resume [--flash-attn-wheel" in result.stdout
     assert "source build otherwise" in result.stdout
+    assert "FLASH_ATTN_INSTALL_MODE=defer" in result.stdout
+
+
+def test_lingbot_v2_image_builds_flash_attention_on_focal() -> None:
+    dockerfile = (ROOT / "Dockerfile.lingbot_v2").read_text(encoding="utf-8")
+    build_script = (ROOT / "docker/build_lingbot_v2.sh").read_text(encoding="utf-8")
+    assert "nvidia/cuda:12.8.1-devel-ubuntu20.04" in dockerfile
+    assert "FLASH_ATTENTION_FORCE_BUILD=TRUE" in dockerfile
+    assert "python -m pip wheel" in dockerfile
+    assert "assert_glibc_compatible" in dockerfile
+    assert "COPY --from=lingbot-v2-flash-builder /opt/kuavo-env" in dockerfile
+    assert "COPY --from=lingbot_v2_source . ./third_party/lingbot-vla-v2" in dockerfile
+    assert "--build-context \"lingbot_v2_source=" in build_script
+
+
+def test_lingbot_training_compile_defaults_are_enabled() -> None:
+    v1_pipeline = (ROOT / "scripts/run_task1_lingbot_full_pipeline.sh").read_text()
+    v1_config = (ROOT / "configs/policy/lingbot/task1_345_full.yaml").read_text()
+    v2_config = (ROOT / "configs/policy/lingbot_v2/kuavo_lora.yaml").read_text()
+    v2_task2 = (
+        ROOT / "configs/policy/lingbot_v2/kuavo_lora_task2_bimanual.yaml"
+    ).read_text()
+    assert ': "${USE_COMPILE:=true}"' in v1_pipeline
+    assert "use_compile: true" in v1_config
+    assert "use_compile: true" in v2_config
+    assert "use_compile: true" in v2_task2
+    assert "save_hf_weights: true" in v2_task2
+    assert "keep_last_checkpoints: 1" in v2_task2

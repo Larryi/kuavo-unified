@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from docker.flash_attn_wheel import assert_glibc_compatible, version_tuple, wheel_name
+from docker.flash_attn_wheel import (
+    RELEASE_DOWNLOAD,
+    assert_glibc_compatible,
+    version_tuple,
+    wheel_name,
+)
 
 
 def test_lingbot_v2_official_wheel_tuple() -> None:
@@ -62,3 +67,10 @@ def test_old_glibc_is_rejected() -> None:
             {"libc": "glibc", "libc_version": "2.31"},
             "2.32",
         )
+
+
+def test_direct_release_fallback_is_canonical() -> None:
+    assert RELEASE_DOWNLOAD.format(version="2.8.3", name="wheel.whl") == (
+        "https://github.com/Dao-AILab/flash-attention/releases/download/"
+        "v2.8.3/wheel.whl"
+    )

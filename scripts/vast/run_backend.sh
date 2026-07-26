@@ -114,11 +114,6 @@ print(len(payload))
 PY
 )"
 fi
-if (( dataset_mix_count > 1 )) && [[ "${MODEL_BACKEND}" == "lingbot-v2" ]]; then
-  echo "lingbot-v2 is paused and currently accepts one dataset." >&2
-  exit 2
-fi
-
 describe_profile
 echo "Datasets: $(( dataset_mix_count > 0 ? dataset_mix_count : 1 ))"
 if [[ "${DRY_RUN}" == "1" ]]; then
@@ -281,6 +276,39 @@ prepare_classic_environment() {
   uv pip install --python "${PYTHON_BIN}" -r "${CODE_DIR}/requirements_train_cloud.txt"
 }
 
+prepare_lingbot_v2_environment() {
+  local env_name="${LINGBOT_V2_ENV_NAME:-lingbotvla_v2}"
+  if [[ "${PREPARE_ENV}" == "1" ]]; then
+    set_phase "prepare LingBot-v2 environment"
+    if ! command -v conda >/dev/null 2>&1; then
+      local miniforge_root="${WORK_ROOT}/miniforge3"
+      if [[ ! -x "${miniforge_root}/bin/conda" ]]; then
+        local installer="${WORK_ROOT}/Miniforge3-Linux-x86_64.sh"
+        curl --fail --location --retry 5 --retry-all-errors \
+          --output "${installer}" \
+          "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh"
+        bash "${installer}" -b -p "${miniforge_root}"
+      fi
+      export PATH="${miniforge_root}/bin:${PATH}"
+    fi
+    PIP_INDEX_URL="${PIP_INDEX_URL}" \
+      FLASH_ATTN_INSTALL_MODE="${FLASH_ATTN_INSTALL_MODE:-auto}" \
+      LINGBOT_V2_ENV_NAME="${env_name}" \
+      bash "${CODE_DIR}/docker/create_lingbot_v2_env.sh"
+  fi
+  command -v conda >/dev/null 2>&1 || {
+    echo "LingBot-v2 requires conda or PREPARE_ENV=1." >&2
+    exit 4
+  }
+  PYTHON_BIN="$(conda run -n "${env_name}" python -c 'import sys; print(sys.executable)')"
+  [[ -x "${PYTHON_BIN}" ]] || {
+    echo "LingBot-v2 Python is missing: ${PYTHON_BIN}" >&2
+    exit 4
+  }
+  export PYTHON_BIN
+  export PATH="$(dirname "${PYTHON_BIN}"):${PATH}"
+}
+
 validate_lingbot_v2_environment() {
   PIPELINE_PHASE="validate LingBot-v2 environment"
   "${PYTHON_BIN}" - <<'PY'
@@ -305,6 +333,22 @@ download_hf() {
   mkdir -p "${local_dir}"
   hf download "${repo_id}" --repo-type "${repo_type}" \
     --local-dir "${local_dir}" --max-workers "${HF_DOWNLOAD_WORKERS}"
+}
+
+download_hf_processor() {
+  local repo_id="$1" local_dir="$2"
+  mkdir -p "${local_dir}"
+  hf download "${repo_id}" \
+    --local-dir "${local_dir}" --max-workers "${HF_DOWNLOAD_WORKERS}" \
+    --include \
+      "config.json" \
+      "tokenizer*" \
+      "special_tokens_map.json" \
+      "added_tokens.json" \
+      "vocab.json" \
+      "merges.txt" \
+      "*processor_config.json" \
+      "chat_template*"
 }
 
 download_resume() {
@@ -397,22 +441,24 @@ run_classic() {
 }
 
 run_lingbot_v2() {
-  local model_root qwen_root moge_root output_base run_dir
+  local model_root qwen_root moge_root output_base run_dir norm_file
   model_root="${WORK_ROOT}/models/lingbot-vla-v2-6b"
   qwen_root="${WORK_ROOT}/models/Qwen3-VL-4B-Instruct"
   moge_root="${WORK_ROOT}/models/moge-2-vitb-normal"
   output_base="${WORK_ROOT}/outputs/lingbot_v2"
   run_dir="${output_base}/run_${RUN_ID}"
-  PIPELINE_PHASE="download dataset and LingBot-v2 assets"
-  download_hf "${DATASET_REPO}" "${DATASET_ROOT}" dataset
+  resolve_dataset_mixture
+  PIPELINE_PHASE="download LingBot-v2 assets"
   download_hf "${LINGBOT_V2_MODEL_REPO:-robbyant/lingbot-vla-v2-6b}" "${model_root}"
-  download_hf "${QWEN3_MODEL_REPO:-Qwen/Qwen3-VL-4B-Instruct}" "${qwen_root}"
+  download_hf_processor "${QWEN3_MODEL_REPO:-Qwen/Qwen3-VL-4B-Instruct}" "${qwen_root}"
   download_hf "${MOGE_MODEL_REPO:-Ruicheng/moge-2-vitb-normal}" "${moge_root}"
   export LINGBOT_V2_MOGE_PATH="${moge_root}/model.pt"
   export LINGBOT_V2_DEPTH_PATH="${model_root}/depth/model.pt"
   export LINGBOT_V2_DINO_CKPT="${model_root}/dino_video/teacher_step_10000.pth"
   export LINGBOT_V2_DINO_CONFIG="${model_root}/dino_video/config.yaml"
   for required_asset in \
+    "${model_root}/config.json" \
+    "${model_root}/model.safetensors.index.json" \
     "${LINGBOT_V2_MOGE_PATH}" \
     "${LINGBOT_V2_DEPTH_PATH}" \
     "${LINGBOT_V2_DINO_CKPT}" \
@@ -424,6 +470,25 @@ run_lingbot_v2() {
       exit 5
     }
   done
+  if [[ "${RESUME_MODE}" == "hf" ]]; then
+    run_dir="${output_base}/run_${RESUME_RUN_ID}"
+    download_resume "${run_dir}"
+  fi
+  PIPELINE_PHASE="compute LingBot-v2 normalization"
+  norm_file="${run_dir}/norm_stats.json"
+  mkdir -p "${run_dir}"
+  export LINGBOT_V2_ROOT="${CODE_DIR}/third_party/lingbot-vla-v2"
+  export LINGBOT_V2_NORM_STATS="${norm_file}"
+  PYTHONPATH="${CODE_DIR}:${LINGBOT_V2_ROOT}:${CODE_DIR}/third_party/lerobot/src:${PYTHONPATH:-}" \
+    "${PYTHON_BIN}" "${CODE_DIR}/kuavo_train/lingbot_v2/compute_norm_stats.py" \
+      "${CODE_DIR}/${LINGBOT_V2_NORM_CONFIG}" \
+      --data.data_name "${LINGBOT_V2_DATA_NAME}" \
+      --data.train_path "${DATASET_ROOT}" \
+      --data.robot_config_root "${CODE_DIR}/configs/robot_configs" \
+      --data.num_workers "${NORM_WORKERS:-4}" \
+      --data.norm_path "${norm_file}" \
+      --data.data_ratio_for_norm_compute 1 \
+      --data.norm_merge_chunk_dim true
   PIPELINE_PHASE="train LingBot-v2"
   TRAIN_STARTED=1
   (cd "${CODE_DIR}" && "${PYTHON_BIN}" kuavo_train/train_lingbot_v2.py \
@@ -435,8 +500,14 @@ run_lingbot_v2() {
     "training.accumulation_steps=${GRAD_ACCUM_STEPS:-4}" \
     "training.max_training_step=${TRAIN_MAX_STEPS:-10000}" \
     "training.max_epoch=${TRAIN_EPOCHS:-10}" \
+    "training.resume=$([[ "${RESUME_MODE}" == "hf" ]] && echo true || echo false)" \
+    "training.resume_timestamp=${RESUME_RUN_ID}" \
+    "policy.config_path=${LINGBOT_V2_TRAIN_CONFIG}" \
     "policy.model_path=${model_root}" \
     "policy.tokenizer_path=${qwen_root}")
+  if [[ -f "${LOG_DIR}/dataset_mix.resolved.json" ]]; then
+    cp "${LOG_DIR}/dataset_mix.resolved.json" "${run_dir}/dataset_mix.json"
+  fi
   upload_directory "${run_dir}"
 }
 
@@ -491,6 +562,7 @@ case "${MODEL_BACKEND}" in
     UPLOAD_STATUS="success"
     ;;
   lingbot-v2)
+    prepare_lingbot_v2_environment
     validate_lingbot_v2_environment
     require_command hf
     run_lingbot_v2

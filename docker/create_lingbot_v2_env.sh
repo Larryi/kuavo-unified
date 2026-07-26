@@ -9,6 +9,7 @@ FLASH_ATTN_INSTALL_MODE="${FLASH_ATTN_INSTALL_MODE:-auto}"
 
 if [[ "${DRY_RUN}" == "1" ]]; then
     echo "FLASH_ATTN_INSTALL_MODE=auto: official wheel on glibc >= 2.32, source build otherwise"
+    echo "FLASH_ATTN_INSTALL_MODE=defer: omit flash-attn only for an archive consumed by Dockerfile.lingbot_v2"
     echo "conda create -n ${ENV_NAME} python=3.12 pip -y"
     echo "conda run -n ${ENV_NAME} python -m pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 torchdata==0.11.0 torchcodec==0.6.0"
     echo "when compatible: conda run -n ${ENV_NAME} python docker/flash_attn_wheel.py --version 2.8.3 --download-dir ${WHEEL_DIR}"
@@ -18,6 +19,7 @@ fi
 
 host_glibc="$(getconf GNU_LIBC_VERSION | awk '{print $2}')"
 use_official_wheel=0
+defer_flash_attn=0
 case "${FLASH_ATTN_INSTALL_MODE}" in
     auto)
         if [[ "$(printf '%s\n' "2.32" "${host_glibc}" | sort -V | head -n1)" == "2.32" ]]; then
@@ -26,8 +28,9 @@ case "${FLASH_ATTN_INSTALL_MODE}" in
         ;;
     wheel) use_official_wheel=1 ;;
     source) use_official_wheel=0 ;;
+    defer) defer_flash_attn=1 ;;
     *)
-        echo "FLASH_ATTN_INSTALL_MODE must be auto, wheel, or source." >&2
+        echo "FLASH_ATTN_INSTALL_MODE must be auto, wheel, source, or defer." >&2
         exit 2
         ;;
 esac
@@ -43,7 +46,10 @@ conda run -n "${ENV_NAME}" python -m pip install \
     torchdata==0.11.0 torchcodec==0.6.0
 
 setup_args=(--env-name "${ENV_NAME}" --resume)
-if [[ "${use_official_wheel}" == "1" ]]; then
+if [[ "${defer_flash_attn}" == "1" ]]; then
+    echo "Deferring flash-attn installation to Dockerfile.lingbot_v2."
+    setup_args+=(--skip-flash-attn)
+elif [[ "${use_official_wheel}" == "1" ]]; then
     resolver_output="$(
         conda run -n "${ENV_NAME}" python \
             "${REPO_ROOT}/docker/flash_attn_wheel.py" \

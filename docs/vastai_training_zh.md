@@ -34,7 +34,7 @@ Dry-run 只显示模型所需的数据、预训练权重及远端入口，不进
 | `task2` | `dp` | `dp_r2_h100.yaml` |
 | `task3` | `act` | `act_config.yaml` + `task=task3` |
 
-LingBot-v2 仍按决定暂缓，入口会在联网前拒绝。正式运行前，把示例复制到
+LingBot-v2 已恢复为 Task2 bimanual 训练入口。正式运行前，把示例复制到
 仓库外并设置为私有：
 
 ```bash
@@ -105,13 +105,21 @@ MoGe、Depth 和 DINO 路径会显式传给上游 trainer，避免继承开发�
 覆盖参数一致。默认还会用 `requirements_train_cloud.txt` 补齐依赖；
 已在镜像中预装并验证依赖时，可设置 `PREPARE_ENV=0`。
 
-OpenPI、DP、ACT 和 LingBot-v1 都支持同构数据集的虚拟加权混合。向导会
+OpenPI、DP、ACT 和 LingBot-v1/v2 都支持同构数据集的虚拟加权混合。向导会
 逐个选择 HF dataset 并输入比例；远端下载后校验 task 对应 state/action
 维度、相机、FPS、robot type 和 LeRobot 版本。DP/ACT 合并 norm stats，
-LingBot-v1 和 OpenPI 按训练采样分布重新计算 norm。LingBot-v2 仍只接受
-单数据集。
+LingBot-v1、LingBot-v2 和 OpenPI 均按训练采样分布重新计算 norm。
 
-LingBot-v2 云端训练适配暂缓，不进入当前流程。
+LingBot-v2 会自动创建 Python 3.12/PyTorch 2.8 环境，并下载：
+
+- `robbyant/lingbot-vla-v2-6b`（6B 基模、LingBot-Depth、DINO-video）；
+- `Qwen/Qwen3-VL-4B-Instruct`（tokenizer/processor）；
+- `Ruicheng/moge-2-vitb-normal`（`model.pt`）。
+
+下载后会逐项检查模型 index、Depth、DINO、MoGe 和 Qwen processor 文件，
+再按所选 Task2 数据集生成 bimanual norm stats。训练默认开启
+`torch.compile`，每 5000 step 保存 checkpoint，只保留最新完整 DCP，并
+生成已合并 LoRA 的完整 `hf_ckpt`。
 
 ## 进度跟踪
 

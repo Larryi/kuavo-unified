@@ -37,7 +37,6 @@ class BackendSpec:
     norm_required: bool = False
     tokenizer_required: bool = False
     ros_ready: bool = True
-    delivery_paused: bool = False
 
 
 @dataclass(frozen=True)
@@ -66,7 +65,7 @@ BACKENDS = {
         "lingbot-v2", "lingbot_v2", "kuavo-lingbot-v2:latest",
         "docker/build_lingbot_v2.sh", "LINGBOT_V2_ENV_ARCHIVE",
         "configs/deploy/kuavo_env.lingbot_v2.yaml",
-        qwen_required=True, norm_required=True, delivery_paused=True,
+        qwen_required=True, norm_required=True,
     ),
     "openpi": BackendSpec(
         "openpi", "client", "kuavo-openpi:latest", "docker/build_openpi.sh",
@@ -83,6 +82,11 @@ TASKS = {
     "task1-lingbot-v1": TaskSpec(
         "task1-lingbot-v1", "lingbot-v1", "configs/deploy/kuavo_env.lingbot.yaml",
         "Task1 right arm + Leju claw, legacy absolute-action LingBot-v1",
+    ),
+    "task2-lingbot-v2": TaskSpec(
+        "task2-lingbot-v2", "lingbot-v2",
+        "configs/deploy/kuavo_env.lingbot_v2.yaml",
+        "Task2 bimanual + dual Leju claws, LingBot-VLA v2",
     ),
     "task2-dp": TaskSpec(
         "task2-dp", "dp", "configs/deploy/kuavo_env.dp.task2.yaml",
@@ -316,14 +320,9 @@ def reject_sensitive_files(paths: list[Path | None]) -> None:
 
 
 def ensure_ros_ready(spec: BackendSpec, operation: str) -> None:
-    if spec.delivery_paused and operation in {"shell", "release"}:
-        raise UsageError(
-            "LingBot-v2 交付适配已按操作者决定暂缓；"
-            f"已阻止 {operation}，恢复前不得生成或标记最终交付镜像。"
-        )
     if not spec.ros_ready and operation in {"shell", "release"}:
         raise UsageError(
-            "LingBot-v2 当前仍是纯 Worker 镜像，尚未包含 ROS Noetic/KuavoBaseEnv；"
+            f"{spec.key} 当前尚未包含 ROS Noetic/KuavoBaseEnv；"
             f"已阻止 {operation}，避免误认为可最终交付。"
         )
 

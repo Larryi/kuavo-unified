@@ -12,11 +12,16 @@ import re
 import subprocess
 import sys
 import urllib.request
+import urllib.error
 import zipfile
 
 
 RELEASE_API = (
     "https://api.github.com/repos/Dao-AILab/flash-attention/releases/tags/v{version}"
+)
+RELEASE_DOWNLOAD = (
+    "https://github.com/Dao-AILab/flash-attention/releases/download/"
+    "v{version}/{name}"
 )
 
 
@@ -71,8 +76,22 @@ def release_asset(version: str, expected_name: str) -> dict[str, str]:
             "User-Agent": "kuavo-unified-flash-attn-resolver",
         },
     )
-    with urllib.request.urlopen(request, timeout=30) as response:
-        release = json.load(response)
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            release = json.load(response)
+    except urllib.error.HTTPError as exc:
+        if exc.code not in {403, 429}:
+            raise
+        # GitHub's unauthenticated API is rate limited independently from
+        # release downloads. The asset filename is already derived from the
+        # exact runtime tuple, so retry the canonical release URL directly.
+        return {
+            "name": expected_name,
+            "browser_download_url": RELEASE_DOWNLOAD.format(
+                version=version,
+                name=expected_name,
+            ),
+        }
     matches = [asset for asset in release.get("assets", []) if asset["name"] == expected_name]
     if not matches:
         raise FileNotFoundError(
@@ -151,11 +170,16 @@ def main() -> None:
 
     asset = release_asset(args.version, expected_name)
     output["url"] = asset["browser_download_url"]
-    output["size"] = str(asset["size"])
+    expected_size = int(asset["size"]) if "size" in asset else None
+    if expected_size is not None:
+        output["size"] = str(expected_size)
     if args.download_dir is not None:
         args.download_dir.mkdir(parents=True, exist_ok=True)
         destination = args.download_dir / expected_name
-        if not destination.is_file() or destination.stat().st_size != int(asset["size"]):
+        if (
+            not destination.is_file()
+            or (expected_size is not None and destination.stat().st_size != expected_size)
+        ):
             request = urllib.request.Request(
                 asset["browser_download_url"],
                 headers={"User-Agent": "kuavo-unified-flash-attn-resolver"},

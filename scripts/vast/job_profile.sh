@@ -14,14 +14,17 @@ apply_vast_job_profile() {
       export TASK_NAME="${TASK_NAME:-r2}"
       export METHOD_NAME="${METHOD_NAME:-dp_vast}"
       ;;
+    task2:lingbot-v2)
+      export TASK_NAME="${TASK_NAME:-r2}"
+      export METHOD_NAME="${METHOD_NAME:-lingbot_v2_bimanual_vast}"
+      export LINGBOT_V2_TRAIN_CONFIG="${LINGBOT_V2_TRAIN_CONFIG:-configs/policy/lingbot_v2/kuavo_lora_task2_bimanual.yaml}"
+      export LINGBOT_V2_NORM_CONFIG="${LINGBOT_V2_NORM_CONFIG:-configs/policy/lingbot_v2/kuavo_norm_task2_bimanual.yaml}"
+      export LINGBOT_V2_DATA_NAME="${LINGBOT_V2_DATA_NAME:-kuavo_v2_bimanual}"
+      ;;
     task3:act)
       export TRAIN_CONFIG_NAME="${TRAIN_CONFIG_NAME:-act_config.yaml}"
       export TASK_NAME="${TASK_NAME:-task3}"
       export METHOD_NAME="${METHOD_NAME:-act_vast}"
-      ;;
-    *:lingbot-v2)
-      echo "LingBot-v2 cloud training integration is paused." >&2
-      return 2
       ;;
     *)
       echo "Unsupported VastAI task/backend pair: ${TRAINING_TASK} + ${MODEL_BACKEND}" >&2

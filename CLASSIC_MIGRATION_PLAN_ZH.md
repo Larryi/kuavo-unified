@@ -297,8 +297,11 @@ G 阶段验收：
   CUDA 均通过 import/GPU smoke。LingBot-v2 已改为继承同一 Classic
   ROS 镜像，独立 Python 3.12 Server 与 Classic ROS Client 通过
   localhost 协议连接；其环境归档必须兼容 glibc 2.31，flash-attn
-  需要在带 nvcc 的 Focal builder 上源码构建。V2 镜像构建和 ROS 消息
-  闭环仍待该归档生成后验收，Gate I 为“部分通过”。
+  需要在带 nvcc 的 Focal builder 上源码构建。V2 环境归档和
+  `kuavo-lingbot-v2:latest` 已实际生成；镜像内 glibc 2.31、
+  ROS Noetic/KuavoBaseEnv、RTX 3090、Torch 2.8.0+cu128 和
+  flash-attn 2.8.3 导入均通过。真实 v2 checkpoint 的 ROS 消息闭环
+  仍待验收，Gate I 为“部分通过”。
 - J 阶段自动验收已执行：OpenPI `8e9c6c` 可导入；单镜像内 JAX 已识别
   `cuda:0`，Classic Torch 已识别 RTX 3090；
   Task1 本地 LeRobot 数据可读（200 episodes、43,924 frames、10 Hz）；
@@ -324,8 +327,8 @@ G 阶段验收：
   Torch 2.11 的 `lerobot_hil`。准确的 conda-pack 和构建命令已更新到
   `docker/readme.md`。官方 flash-attn 2.8.3 wheel 还要求 GLIBC 2.32；
   V2 最终镜像为 Classic/glibc 2.31，因此其 2.8.3 扩展改为在带 nvcc
-  的兼容 builder 上源码构建。LingBot-v1 继续使用已验证的
-  2.7.0.post2 wheel。
+  的兼容 builder 上源码构建；实际生成的 wheel 最高要求 GLIBC 2.14，
+  容器 GPU 导入已通过。LingBot-v1 继续使用已验证的 2.7.0.post2 wheel。
 
 后续进展：
 
@@ -335,16 +338,17 @@ G 阶段验收：
   清单。完整工作树 rsync 仅保留为显式 `--sync-working-tree` fallback。
   远端 `restore_and_launch.sh` 交互验证 HF 身份、选择算法/任务/数据集/
   输出及 resume 仓库、W&B/ServerChan/Vast 凭据，再恢复环境并启动。
-  OpenPI、DP、ACT、LingBot-v1 均支持多个 HF LeRobot v3 数据集的虚拟
+  OpenPI、DP、ACT、LingBot-v1、LingBot-v2 均支持多个 HF LeRobot v3 数据集的虚拟
   加权混合并逐源校验 schema。DP/ACT 合并加权 norm stats，LingBot-v1
-  与 OpenPI 的 norm stats 和训练 sampler 使用同一比例。LingBot-v2
-  适配仍暂缓并限制为单数据集。DP/ACT 默认禁用重复的周期 `epochN`，
+  与 OpenPI 的 norm stats 和训练 sampler 使用同一比例；LingBot-v2
+  使用 Task2 bimanual schema 和混合 norm。DP/ACT 默认禁用重复的周期 `epochN`，
   LingBot-v1/OpenPI 完整训练 checkpoint 默认也只保留最新一个。
 
 - 最终镜像流程已拆分为两层：`scripts/kuavo_base_image` 管理不含任务
   权重的算法基础镜像并可选导出 TAR；`scripts/package_inference_image`
   按 task + algorithm + checkpoint 生成推理派生镜像，默认不执行
-  `docker save`。任务错配与暂缓的 LingBot-v2 会在构建前失败。
+  `docker save`。任务错配会在构建前失败；LingBot-v2 已绑定
+  `task2-lingbot-v2`。
 - VastAI 新入口 `scripts/vast/launch_job.sh` 强制一个实例绑定一个 task
   和 algorithm；私有 env 提供数据集、输出仓库和凭据，profile 自动选择
   训练配置及预训练资产。支持从含完整训练状态的 HF 仓库 resume，并通过
@@ -360,11 +364,11 @@ G 阶段验收：
   LingBot-v2 的 global-step DCP 已按训练参数（LoRA rank 8、alpha 16）
   合并为完整 HF checkpoint，3 个 safetensors shard、1708 个键且无
   PEFT 残留；checkpoint 内已携带可移植的 `lingbotvla_cli.yaml`。
-  **按操作者 2026-07-25 的决定，LingBot-v2 后续适配现已暂缓。**
-  暂缓范围包括运行环境定型、最终 ROS-capable 镜像、真实权重加载、
-  open-loop/ROS mock 和真机验收；恢复前需重新决定“Ubuntu 22.04 +
-  官方 flash-attn wheel + ROS Noetic 兼容层”或其他交付基线。现有 HF
-  checkpoint、fork 修复和统一 adapter 代码保留，不作为已完成交付。
+  操作者于 2026-07-26 恢复 LingBot-v2 适配。云端 Task2 训练路由、预训练
+  资产下载、混合 norm、`torch.compile` 和完整 HF checkpoint 已接通；
+  部署采用 CUDA 12.8/Ubuntu 20.04 builder 源码构建 flash-attn，再进入
+  Classic ROS Noetic 最终镜像；基础镜像 GPU/ROS 导入已经通过。真实权重
+  open-loop/ROS mock 和真机验收仍未完成。
 - LingBot-v1 随后完成真实 GPU open-loop 门禁并定位旧权重动作契约：
   该 checkpoint 的 `source_training_config.yaml` 使用旧
   `custom_task1_345_right_arm`，输出为绝对关节位置；若误用新版

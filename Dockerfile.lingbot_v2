@@ -1,6 +1,67 @@
 # syntax=docker/dockerfile:1.7
 
 ARG CLASSIC_BASE_IMAGE=kuavo-classic:latest
+ARG LINGBOT_V2_CUDA_BUILDER_IMAGE=nvidia/cuda:12.8.1-devel-ubuntu20.04
+
+# Build FlashAttention inside the oldest supported deployment userspace.
+# Official 2.8.3 wheels currently reference GLIBC_2.32, while ROS Noetic's
+# Ubuntu 20.04 base provides GLIBC_2.31.
+FROM ${LINGBOT_V2_CUDA_BUILDER_IMAGE} AS lingbot-v2-flash-builder
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG PIP_INDEX_URL=https://mirrors.bfsu.edu.cn/pypi/web/simple
+ARG FLASH_ATTN_VERSION=2.8.3
+ARG FLASH_ATTN_MAX_JOBS=4
+
+ENV PIP_INDEX_URL=${PIP_INDEX_URL} \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=0 \
+    FLASH_ATTENTION_FORCE_BUILD=TRUE \
+    MAX_JOBS=${FLASH_ATTN_MAX_JOBS} \
+    NVCC_THREADS=2
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean && \
+    apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        git \
+        ninja-build
+
+COPY --from=lingbot_v2_env /myenv.tar.gz /tmp/myenv.tar.gz
+COPY docker/flash_attn_wheel.py /tmp/flash_attn_wheel.py
+RUN --mount=type=cache,target=/root/.cache/pip \
+    mkdir -p /opt/kuavo-env /tmp/flash-wheel && \
+    tar -xzf /tmp/myenv.tar.gz -C /opt/kuavo-env && \
+    rm -f /tmp/myenv.tar.gz && \
+    /opt/kuavo-env/bin/python /opt/kuavo-env/bin/conda-unpack && \
+    /opt/kuavo-env/bin/python -m pip uninstall -y flash-attn && \
+    /opt/kuavo-env/bin/python -m pip wheel \
+        --no-build-isolation --no-deps \
+        --wheel-dir /tmp/flash-wheel \
+        "flash-attn==${FLASH_ATTN_VERSION}" && \
+    flash_wheel="$(find /tmp/flash-wheel -maxdepth 1 -type f -name 'flash_attn-*.whl' -print -quit)" && \
+    test -n "${flash_wheel}" && \
+    /opt/kuavo-env/bin/python -m pip install --no-deps --force-reinstall "${flash_wheel}" && \
+    PYTHONPATH=/tmp FLASH_WHEEL="${flash_wheel}" /opt/kuavo-env/bin/python - <<'PY'
+import importlib.metadata
+import os
+from pathlib import Path
+
+from flash_attn_wheel import assert_glibc_compatible, inspect_runtime, required_glibc
+
+wheel = Path(os.environ["FLASH_WHEEL"])
+runtime = inspect_runtime("/opt/kuavo-env/bin/python")
+requirement = required_glibc(wheel)
+assert_glibc_compatible(runtime, requirement)
+assert importlib.metadata.version("flash-attn") == "2.8.3"
+import flash_attn
+print("Deployment-built FlashAttention:", flash_attn.__version__, runtime, requirement)
+PY
+
 FROM ${CLASSIC_BASE_IMAGE}
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -20,20 +81,18 @@ ENV LANG=C.UTF-8 \
 
 WORKDIR /root/kuavo_data_challenge
 
-# Create this archive from the upstream Python 3.12 / PyTorch 2.8 environment.
-COPY --from=lingbot_v2_env /myenv.tar.gz /tmp/myenv.tar.gz
-RUN mkdir -p /opt/kuavo-env && \
-    tar -xzf /tmp/myenv.tar.gz -C /opt/kuavo-env && \
-    rm -f /tmp/myenv.tar.gz && \
-    /opt/kuavo-env/bin/conda-unpack
+# The complete Python environment, including FlashAttention compiled against
+# Ubuntu 20.04/glibc 2.31, comes from the CUDA builder above.
+COPY --from=lingbot-v2-flash-builder /opt/kuavo-env /opt/kuavo-env
 
 COPY . .
+COPY --from=lingbot_v2_source . ./third_party/lingbot-vla-v2
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     /opt/kuavo-env/bin/python -m pip install -e . --no-deps --root-user-action=ignore && \
     /opt/kuavo-env/bin/python -m pip install -r requirements_policy_client.txt --root-user-action=ignore && \
     /opt/kuavo-env/bin/python -m pip install -e ./third_party/lingbot-vla-v2 --no-deps --root-user-action=ignore && \
-    /opt/kuavo-env/bin/python -c "import torch, transformers, websockets; assert torch.__version__.startswith('2.8.'); print(torch.__version__, transformers.__version__, websockets.__version__)" && \
+    /opt/kuavo-env/bin/python -c "import flash_attn, torch, transformers, websockets; assert torch.__version__.startswith('2.8.'); assert flash_attn.__version__ == '2.8.3'; print(torch.__version__, transformers.__version__, websockets.__version__, flash_attn.__version__)" && \
     bash -lc 'source /opt/ros/noetic/setup.bash && source myenv/bin/activate && python -c "import rospy; from kuavo_deploy.kuavo_env.KuavoBaseRosEnv import KuavoBaseRosEnv; print(\"LingBot-v2 ROS client imports: OK\")"'
 
 ENTRYPOINT ["/opt/kuavo-env/bin/python", "tools/policy_worker.py"]

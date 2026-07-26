@@ -21,7 +21,7 @@ usage() {
 Usage:
   scripts/package_inference_image \
     --task task1|task2|task3 \
-    --algorithm openpi|lingbot-v1|dp|act \
+    --algorithm openpi|lingbot-v1|lingbot-v2|dp|act \
     --checkpoint /path/to/checkpoint \
     [--checkpoint-subpath epochbest] [--qwen DIR] [--norm-stats FILE]
     [--tokenizer FILE] [--runtime-assets DIR] [--base-image IMAGE]
@@ -30,6 +30,7 @@ Usage:
 Supported delivery pairs:
   task1 + openpi
   task1 + lingbot-v1
+  task2 + lingbot-v2
   task2 + dp
   task3 + act
 
@@ -65,12 +66,9 @@ done
 case "${TASK}:${ALGORITHM}" in
     task1:openpi) PROFILE="task1-openpi" ;;
     task1:lingbot-v1) PROFILE="task1-lingbot-v1" ;;
+    task2:lingbot-v2) PROFILE="task2-lingbot-v2" ;;
     task2:dp) PROFILE="task2-dp" ;;
     task3:act) PROFILE="task3-act" ;;
-    *:lingbot-v2)
-        echo "LingBot-v2 delivery is paused." >&2
-        exit 2
-        ;;
     *)
         echo "Unsupported task/algorithm pair: ${TASK} + ${ALGORITHM}" >&2
         exit 2

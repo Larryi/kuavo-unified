@@ -21,7 +21,7 @@ umask 077
 : "${DATALOADER_PREFETCH:=4}"
 : "${MIN_FREE_GB:=120}"
 : "${HEARTBEAT_SECONDS:=600}"
-: "${USE_COMPILE:=false}"
+: "${USE_COMPILE:=true}"
 : "${FLASH_ATTN_VERSION:=2.8.3}"
 : "${FLASH_ATTN_WHEEL_URL:=}"
 : "${WANDB_PROJECT:=LingBotVLA-Kuavo}"
@@ -368,7 +368,17 @@ else
     retry 3 hf download "${DATASET_REPO}" --repo-type dataset --local-dir "${DATASET_ROOT}" --max-workers 16
 fi
 retry 3 hf download "${LINGBOT_MODEL_REPO}" --local-dir "${LINGBOT_MODEL_ROOT}" --max-workers 16
-retry 3 hf download "${QWEN_MODEL_REPO}" --local-dir "${QWEN_MODEL_ROOT}" --max-workers 16
+retry 3 hf download "${QWEN_MODEL_REPO}" \
+    --local-dir "${QWEN_MODEL_ROOT}" --max-workers 16 \
+    --include \
+        "config.json" \
+        "tokenizer*" \
+        "special_tokens_map.json" \
+        "added_tokens.json" \
+        "vocab.json" \
+        "merges.txt" \
+        "*processor_config.json" \
+        "chat_template*"
 
 PIPELINE_PHASE="validate dataset and build norm"
 if [[ -z "${DATASET_MIX_JSON:-}" ]]; then
@@ -408,8 +418,10 @@ python "${CODE_DIR}/kuavo_train/lingbot/compute_mixture_norm.py" "${TRAIN_CONFIG
     --train.chunk_size 50
 for required in \
     "${LINGBOT_MODEL_ROOT}/config.json" \
+    "${QWEN_MODEL_ROOT}/config.json" \
     "${QWEN_MODEL_ROOT}/tokenizer_config.json" \
-    "${QWEN_MODEL_ROOT}/tokenizer.json"; do
+    "${QWEN_MODEL_ROOT}/tokenizer.json" \
+    "${QWEN_MODEL_ROOT}/preprocessor_config.json"; do
     [[ -s "${required}" ]] || { echo "Required model asset missing: ${required}" >&2; exit 5; }
 done
 

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+from copy import deepcopy
 import os
 from pathlib import Path
 import sys
@@ -20,6 +21,7 @@ from kuavo_train.lingbot_v2.attention_compat import (
     prepare_attention_imports,
 )
 from kuavo_train.lingbot_v2.dependency_checks import validate_utils3d
+from kuavo_train.dataset_mixture import VirtualWeightedDataset, load_dataset_sources
 
 
 def _load_upstream_trainer():
@@ -54,6 +56,36 @@ def main() -> None:
         return apply_lora(model, settings)
 
     trainer.build_foundation_model = build_with_lora
+
+    original_build_dataset = trainer.build_vla_dataset
+
+    def build_weighted_dataset(*args, **kwargs):
+        sources = load_dataset_sources()
+        if not sources:
+            return original_build_dataset(*args, **kwargs)
+        dataset_config = kwargs.get("dataset_config")
+        if dataset_config is None:
+            raise ValueError("LingBot-v2 mixture requires dataset_config")
+        datasets = []
+        for source in sources:
+            source_config = deepcopy(dataset_config)
+            source_config.train_path = source.root
+            source_kwargs = dict(kwargs)
+            source_kwargs["dataset_config"] = source_config
+            datasets.append(original_build_dataset(*args, **source_kwargs))
+        mixture = VirtualWeightedDataset(datasets, sources, metadata=None)
+        print(
+            "LingBot-v2 dataset mixture:",
+            [
+                (source.repo_id, weight, source.root)
+                for source, weight in zip(
+                    sources, mixture.realized_weights, strict=True
+                )
+            ],
+        )
+        return mixture
+
+    trainer.build_vla_dataset = build_weighted_dataset
 
     saver_cls = trainer.AsyncHFCheckpointSaver
     original_save = saver_cls._save_one_hf_checkpoint

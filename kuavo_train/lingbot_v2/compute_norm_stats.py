@@ -6,6 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
+from copy import deepcopy
 import os
 import runpy
 import sys
@@ -14,6 +15,7 @@ import types
 import torch.multiprocessing as mp
 
 from lingbotvla.utils.arguments import DataArguments, TrainingArguments
+from kuavo_train.dataset_mixture import VirtualWeightedDataset, load_dataset_sources
 
 
 @dataclass
@@ -73,6 +75,29 @@ def main() -> None:
     fake_module.MyTrainingArguments = MyTrainingArguments
     fake_module.MyDataArguments = MyDataArguments
     sys.modules["tasks.vla.train_lingbotvla"] = fake_module
+
+    sources = load_dataset_sources()
+    if sources:
+        import lingbotvla.data as data_package
+        import lingbotvla.data.dataset as dataset_module
+
+        original_build = dataset_module.build_vla_dataset
+
+        def build_weighted_dataset(*args, **kwargs):
+            dataset_config = kwargs.get("dataset_config")
+            if dataset_config is None:
+                raise ValueError("LingBot-v2 norm mixture requires dataset_config")
+            datasets = []
+            for source in sources:
+                source_config = deepcopy(dataset_config)
+                source_config.train_path = source.root
+                source_kwargs = dict(kwargs)
+                source_kwargs["dataset_config"] = source_config
+                datasets.append(original_build(*args, **source_kwargs))
+            return VirtualWeightedDataset(datasets, sources, metadata=None)
+
+        dataset_module.build_vla_dataset = build_weighted_dataset
+        data_package.build_vla_dataset = build_weighted_dataset
     runpy.run_path(str(script), run_name="__main__")
 
 
