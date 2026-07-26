@@ -11,6 +11,9 @@ import os
 from pathlib import Path
 import re
 import shlex
+import sys
+import termios
+import tty
 from typing import Iterable
 
 
@@ -79,6 +82,46 @@ def yes_no(prompt: str, *, default: bool = False) -> bool:
     return raw in {"y", "yes"}
 
 
+def masked_input(prompt: str) -> str:
+    """Read an ASCII secret while echoing one asterisk per entered character."""
+    if not sys.stdin.isatty():
+        return getpass(prompt)
+    fd = sys.stdin.fileno()
+    previous = termios.tcgetattr(fd)
+    secret = bytearray()
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    try:
+        tty.setraw(fd)
+        while True:
+            char = os.read(fd, 1)
+            if char in {b"\r", b"\n"}:
+                break
+            if char == b"\x03":
+                raise KeyboardInterrupt
+            if char in {b"\x08", b"\x7f"}:
+                if secret:
+                    secret.pop()
+                    sys.stdout.write("\b \b")
+                    sys.stdout.flush()
+                continue
+            if char == b"\x15":
+                while secret:
+                    secret.pop()
+                    sys.stdout.write("\b \b")
+                sys.stdout.flush()
+                continue
+            if 32 <= char[0] <= 126:
+                secret.extend(char)
+                sys.stdout.write("*")
+                sys.stdout.flush()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, previous)
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+    return secret.decode("ascii")
+
+
 def select_repositories(
     prompt: str,
     available: list[str],
@@ -104,6 +147,31 @@ def select_repositories(
         except (IndexError, ValueError):
             pass
         print("仓库选择无效。")
+
+
+def select_training_datasets(
+    available: list[str],
+    *,
+    allow_multiple: bool,
+) -> list[str]:
+    selected: list[str] = []
+    if allow_multiple:
+        print("OpenPI 支持多个同构数据集的虚拟加权混合。请逐个添加。")
+    else:
+        print("当前算法只支持一个训练数据集。")
+    while True:
+        repo_id = select_repositories(
+            "选择或输入训练数据集",
+            available,
+            multiple=False,
+        )[0]
+        if repo_id in selected:
+            print("该数据集已经添加，请选择其他仓库。")
+            continue
+        selected.append(repo_id)
+        print(f"已添加 {len(selected)} 个数据集：{repo_id}")
+        if not allow_multiple or not yes_no("继续添加另一个数据集？"):
+            return selected
 
 
 def list_owned_repositories(api, identity: dict, *, repo_type: str) -> list[str]:
@@ -147,7 +215,7 @@ def main() -> int:
     task = JOB_MATRIX[algorithm]
     print(f"任务路由：{task} + {algorithm}")
 
-    token = getpass("HF token（输入不回显）: ").strip()
+    token = masked_input("HF token（以 * 回显）: ").strip()
     if not token:
         raise SystemExit("HF token 不能为空")
     api = HfApi(token=token)
@@ -156,10 +224,9 @@ def main() -> int:
 
     datasets = list_owned_repositories(api, identity, repo_type="dataset")
     allow_multiple = algorithm == "openpi"
-    selected = select_repositories(
-        "选择训练数据集",
+    selected = select_training_datasets(
         datasets,
-        multiple=allow_multiple,
+        allow_multiple=allow_multiple,
     )
     if len(selected) > 1 and not allow_multiple:
         raise SystemExit(f"{algorithm} 当前只支持一个数据集")
@@ -204,11 +271,11 @@ def main() -> int:
             raise SystemExit("RUN_ID 只能包含字母、数字、点、下划线和连字符")
         resume_mode = "hf"
 
-    wandb_key = getpass("W&B API key（可留空）: ").strip()
+    wandb_key = masked_input("W&B API key（可留空，以 * 回显）: ").strip()
     wandb_project = input("W&B project [kuavo-training]: ").strip() or "kuavo-training"
-    serverchan = getpass("ServerChan SendKey（可留空）: ").strip()
+    serverchan = masked_input("ServerChan SendKey（可留空，以 * 回显）: ").strip()
     vast_instance = input("VastAI instance ID（自动关机时必填，可留空）: ").strip()
-    vast_key = getpass("VastAI API key（自动关机时必填，可留空）: ").strip()
+    vast_key = masked_input("VastAI API key（自动关机时必填，以 * 回显）: ").strip()
     auto_stop = "1" if vast_instance and vast_key and yes_no("成功后自动关闭 VastAI 实例？", default=True) else "0"
     gpu_ids = input("CUDA GPU IDs [0]: ").strip() or "0"
     if not re.fullmatch(r"\d+(,\d+)*", gpu_ids):

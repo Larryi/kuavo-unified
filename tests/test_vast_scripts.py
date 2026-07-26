@@ -16,6 +16,7 @@ from tools.vast_bootstrap import (
 from tools.vast_job_wizard import (
     normalize_dataset_mix,
     resume_repo_has_training_state,
+    select_training_datasets,
 )
 
 
@@ -319,6 +320,16 @@ def test_dataset_mix_normalizes_weights() -> None:
     ]
 
 
+def test_openpi_dataset_selection_adds_sources_one_by_one(monkeypatch) -> None:
+    answers = iter(["1", "y", "2", "n"])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+    selected = select_training_datasets(
+        ["owner/task1-sz", "owner/task1-bj"],
+        allow_multiple=True,
+    )
+    assert selected == ["owner/task1-sz", "owner/task1-bj"]
+
+
 @pytest.mark.parametrize(
     ("algorithm", "files", "expected"),
     [
@@ -393,6 +404,13 @@ def test_restore_uses_official_pypi_and_private_env() -> None:
     assert "mirrors.bfsu.edu.cn" not in text
     assert "umask 077" in text
     assert "vast_job_wizard.py" in text
+
+
+def test_secret_reader_echoes_asterisks() -> None:
+    text = (ROOT / "tools" / "vast_job_wizard.py").read_text(encoding="utf-8")
+    assert "def masked_input" in text
+    assert 'sys.stdout.write("*")' in text
+    assert "termios.tcsetattr" in text
 
 
 def test_lingbot_v2_cloud_assets_override_developer_paths() -> None:

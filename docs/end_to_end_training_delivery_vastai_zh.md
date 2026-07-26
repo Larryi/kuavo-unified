@@ -89,13 +89,14 @@ scripts/vast/restore_and_launch.sh
 
 1. 在 `/workspace/kuavo_bootstrap` 创建小型 bootstrap venv；
 2. 默认使用官方 `https://pypi.org/simple` 安装 `huggingface_hub`；
-3. 隐藏输入 HF token，并调用 `whoami` 验证身份；
+3. 输入 HF token，每个字符以 `*` 回显，并调用 `whoami` 验证身份；
 4. 列出当前 HF 用户及组织可见的 dataset/model 仓库；
 5. 选择算法，自动绑定任务；
-6. 选择一个数据集；OpenPI 可选择多个并输入比例；
+6. 选择数据集；OpenPI 使用“逐个添加、确认是否继续”的流程选择多个，
+   然后输入对应比例；
 7. 选择训练输出模型仓库；
 8. 可选选择 resume 模型仓库并检查完整训练状态标记；
-9. 隐藏输入 W&B、ServerChan、VastAI 凭据；
+9. 输入 W&B、ServerChan、VastAI 凭据，均以 `*` 回显；
 10. 生成权限 `0600` 的私有 env 和不含凭据的 JSON 任务清单；
 11. 用户再次确认后才恢复算法环境并启动训练。
 
@@ -140,6 +141,18 @@ OpenPI 云端流水线逐个下载到：
 schema，再把本地 root 写入 resolved manifest。norm stats 使用相同的
 weighted sampler 重新计算，并以 mixture hash 隔离缓存，避免误用另一种
 数据比例的统计。
+
+OpenPI 选择示意：
+
+```text
+选择或输入训练数据集: 1
+已添加 1 个数据集：owner/task1_suzhou
+继续添加另一个数据集？ [y/N]: y
+选择或输入训练数据集: 2
+已添加 2 个数据集：owner/task1_beijing
+继续添加另一个数据集？ [y/N]: n
+依次输入 2 个正数配比（逗号分隔，如 55,20,25）: 25,75
+```
 
 DP/ACT/LingBot-v1 选择多个数据集会在联网和训练前失败。要为这些算法加入
 比例混合，应先在各自 trainer 中实现、测试对应 sampler 和混合 norm
