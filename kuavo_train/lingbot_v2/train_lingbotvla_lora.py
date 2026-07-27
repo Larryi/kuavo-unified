@@ -66,10 +66,21 @@ def main() -> None:
         dataset_config = kwargs.get("dataset_config")
         if dataset_config is None:
             raise ValueError("LingBot-v2 mixture requires dataset_config")
+        configured_data_name = os.environ.get("LINGBOT_V2_DATA_NAME", "").strip()
+        current_data_name = str(
+            getattr(dataset_config, "data_name", "") or ""
+        ).strip()
+        data_name = configured_data_name or current_data_name
+        if not data_name or data_name == "multi":
+            raise ValueError(
+                "LingBot-v2 dataset mixture needs a concrete robot data name; "
+                "set LINGBOT_V2_DATA_NAME"
+            )
         datasets = []
         for source in sources:
             source_config = deepcopy(dataset_config)
             source_config.train_path = source.root
+            source_config.data_name = data_name
             source_kwargs = dict(kwargs)
             source_kwargs["dataset_config"] = source_config
             datasets.append(original_build_dataset(*args, **source_kwargs))

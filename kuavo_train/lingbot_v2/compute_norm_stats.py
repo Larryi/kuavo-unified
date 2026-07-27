@@ -18,6 +18,19 @@ from lingbotvla.utils.arguments import DataArguments, TrainingArguments
 from kuavo_train.dataset_mixture import VirtualWeightedDataset, load_dataset_sources
 
 
+def _source_data_name(dataset_config: Any) -> str:
+    """Recover the real robot config after upstream rewrites it to ``multi``."""
+    configured = os.environ.get("LINGBOT_V2_DATA_NAME", "").strip()
+    current = str(getattr(dataset_config, "data_name", "") or "").strip()
+    data_name = configured or current
+    if not data_name or data_name == "multi":
+        raise ValueError(
+            "LingBot-v2 dataset mixture needs a concrete robot data name; "
+            "set LINGBOT_V2_DATA_NAME (for example kuavo_v2_bimanual)"
+        )
+    return data_name
+
+
 @dataclass
 class MyTrainingArguments(TrainingArguments):
     freeze_vision_encoder: bool = False
@@ -87,14 +100,21 @@ def main() -> None:
             dataset_config = kwargs.get("dataset_config")
             if dataset_config is None:
                 raise ValueError("LingBot-v2 norm mixture requires dataset_config")
+            data_name = _source_data_name(dataset_config)
             datasets = []
             for source in sources:
                 source_config = deepcopy(dataset_config)
                 source_config.train_path = source.root
+                source_config.data_name = data_name
                 source_kwargs = dict(kwargs)
                 source_kwargs["dataset_config"] = source_config
                 datasets.append(original_build(*args, **source_kwargs))
-            return VirtualWeightedDataset(datasets, sources, metadata=None)
+            mixture = VirtualWeightedDataset(datasets, sources, metadata=None)
+            # The upstream norm script introspects this private MultiVLADataset
+            # attribute to determine feature keys. Keep that interface while the
+            # weighted wrapper supplies sampling behavior.
+            mixture._datasets = mixture.datasets
+            return mixture
 
         dataset_module.build_vla_dataset = build_weighted_dataset
         data_package.build_vla_dataset = build_weighted_dataset
