@@ -405,9 +405,11 @@ expected = {
     "torch": "2.8.0",
     "transformers": "4.57.3",
     "accelerate": "1.7.0",
+    "hydra-core": "1.3.2",
 }
 actual = {name: version(name) for name in expected}
 assert actual == expected, (actual, expected)
+import hydra  # noqa: F401
 import flash_attn  # noqa: F401
 print("LingBot-v2 environment passed:", actual)
 PY
