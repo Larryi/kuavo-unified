@@ -116,7 +116,7 @@ describe_profile() {
       echo "MoGe: ${MOGE_MODEL_REPO:-Ruicheng/moge-2-vitb-normal} -> ${WORK_ROOT}/models/moge-2-vitb-normal"
       echo "Depth/DINO: included in the LingBot-v2 base repository"
       echo "Environment: dedicated Python 3.12 / PyTorch 2.8.0 LingBot-v2 image"
-      echo "Dispatch: kuavo_train/train_lingbot_v2.py"
+      echo "Dispatch: python -m kuavo_train.train_lingbot_v2"
       ;;
   esac
 }
@@ -361,6 +361,32 @@ configure_classic_batch_size() {
   echo "Classic adaptive batch size: backend=${MODEL_BACKEND}, memory=${memory_mb} MiB, batch=${TRAIN_BATCH_SIZE}"
 }
 
+lingbot_v2_environment_ready() {
+  local env_name="$1"
+  conda run -n "${env_name}" python - <<'PY'
+import sys
+from importlib.metadata import version
+
+expected = {
+    "torch": "2.8.0",
+    "transformers": "4.57.3",
+    "accelerate": "1.7.0",
+    "hydra-core": "1.3.2",
+}
+if sys.version_info[:2] != (3, 12):
+    raise SystemExit(1)
+if {name: version(name) for name in expected} != expected:
+    raise SystemExit(1)
+
+import flash_attn  # noqa: F401
+import hydra  # noqa: F401
+import utils3d
+
+if not hasattr(getattr(utils3d, "pt", None), "intrinsics_from_focal_center"):
+    raise SystemExit(1)
+PY
+}
+
 prepare_lingbot_v2_environment() {
   local env_name="${LINGBOT_V2_ENV_NAME:-lingbotvla_v2}"
   if [[ "${PREPARE_ENV}" == "1" ]]; then
@@ -376,10 +402,16 @@ prepare_lingbot_v2_environment() {
       fi
       export PATH="${miniforge_root}/bin:${PATH}"
     fi
-    PIP_INDEX_URL="${PIP_INDEX_URL}" \
-      FLASH_ATTN_INSTALL_MODE="${FLASH_ATTN_INSTALL_MODE:-auto}" \
-      LINGBOT_V2_ENV_NAME="${env_name}" \
-      bash "${CODE_DIR}/docker/create_lingbot_v2_env.sh"
+    if conda env list | awk '{print $1}' | grep -Fxq "${env_name}" \
+      && lingbot_v2_environment_ready "${env_name}" >/dev/null 2>&1; then
+      echo "LingBot-v2 environment is ready; skipping dependency installation."
+    else
+      echo "LingBot-v2 environment is missing or incomplete; preparing it once."
+      PIP_INDEX_URL="${PIP_INDEX_URL}" \
+        FLASH_ATTN_INSTALL_MODE="${FLASH_ATTN_INSTALL_MODE:-auto}" \
+        LINGBOT_V2_ENV_NAME="${env_name}" \
+        bash "${CODE_DIR}/docker/create_lingbot_v2_env.sh"
+    fi
   fi
   command -v conda >/dev/null 2>&1 || {
     echo "LingBot-v2 requires conda or PREPARE_ENV=1." >&2
@@ -587,7 +619,7 @@ run_lingbot_v2() {
       --data.norm_merge_chunk_dim true
   PIPELINE_PHASE="train LingBot-v2"
   TRAIN_STARTED=1
-  (cd "${CODE_DIR}" && "${PYTHON_BIN}" kuavo_train/train_lingbot_v2.py \
+  (cd "${CODE_DIR}" && "${PYTHON_BIN}" -m kuavo_train.train_lingbot_v2 \
     "root=${DATASET_ROOT}" \
     "repoid=${DATASET_REPO}" \
     "timestamp=${RUN_ID}" \
