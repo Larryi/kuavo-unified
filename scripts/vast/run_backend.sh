@@ -363,7 +363,11 @@ configure_classic_batch_size() {
 
 lingbot_v2_environment_ready() {
   local env_name="$1"
-  conda run -n "${env_name}" python - <<'PY'
+  local env_python
+  env_python="$(conda run -n "${env_name}" python -c 'import sys; print(sys.executable)')" \
+    || return 1
+  [[ -x "${env_python}" ]] || return 1
+  "${env_python}" - <<'PY'
 import sys
 from importlib.metadata import version
 
@@ -371,11 +375,13 @@ expected = {
     "torch": "2.8.0",
     "transformers": "4.57.3",
     "accelerate": "1.7.0",
-    "hydra-core": "1.3.2",
 }
 if sys.version_info[:2] != (3, 12):
     raise SystemExit(1)
 if {name: version(name) for name in expected} != expected:
+    raise SystemExit(1)
+hydra_version = tuple(int(part) for part in version("hydra-core").split(".")[:3])
+if not (hydra_version >= (1, 3, 2) and hydra_version < (1, 4, 0)):
     raise SystemExit(1)
 
 import flash_attn  # noqa: F401
@@ -437,10 +443,13 @@ expected = {
     "torch": "2.8.0",
     "transformers": "4.57.3",
     "accelerate": "1.7.0",
-    "hydra-core": "1.3.2",
 }
 actual = {name: version(name) for name in expected}
 assert actual == expected, (actual, expected)
+hydra_version = version("hydra-core")
+hydra_parts = tuple(int(part) for part in hydra_version.split(".")[:3])
+assert (1, 3, 2) <= hydra_parts < (1, 4, 0), hydra_version
+actual["hydra-core"] = hydra_version
 import hydra  # noqa: F401
 import flash_attn  # noqa: F401
 print("LingBot-v2 environment passed:", actual)

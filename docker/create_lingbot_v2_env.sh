@@ -80,4 +80,4 @@ bash "${REPO_ROOT}/third_party/lingbot-vla-v2/tools/create_train_env.sh" "${setu
 # LingBot-v2 trainer itself only declares OmegaConf.
 echo "[LingBot-v2 env] Installing Kuavo orchestration dependencies."
 conda run --no-capture-output -n "${ENV_NAME}" python -m pip install \
-    hydra-core==1.3.2
+    "hydra-core>=1.3.2,<1.4"
