@@ -137,6 +137,13 @@ LingBot-v2 会自动创建 Python 3.12/PyTorch 2.8 环境，并下载：
 - `Qwen/Qwen3-VL-4B-Instruct`（tokenizer/processor）；
 - `Ruicheng/moge-2-vitb-normal`（`model.pt`）。
 
+这里保留 Conda 主要为了兼容上游 `create_train_env.sh` 的激活逻辑，以及
+后续通过 `conda-pack` 生成可搬运环境并进入 Ubuntu 20.04/ROS Noetic
+部署镜像；pip 仍负责安装 PyTorch 和绝大多数 Python 包。Conda 并非算法
+本身的硬性依赖，纯云端训练理论上可以改成 uv venv，但会形成与交付镜像
+不同的第二套环境路径。环境创建后的长耗时 pip 安装使用实时输出，避免数
+GB Torch/CUDA 下载被 `conda run` 缓冲后看似卡死。
+
 下载后会逐项检查模型 index、Depth、DINO、MoGe 和 Qwen processor 文件，
 再按所选 Task2 数据集生成 bimanual norm stats。训练默认开启
 `torch.compile`，每 5000 step 保存 checkpoint，只保留最新完整 DCP，并

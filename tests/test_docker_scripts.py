@@ -212,6 +212,12 @@ def test_lingbot_v2_env_dry_run_resolves_wheel_after_torch() -> None:
     assert "FLASH_ATTN_INSTALL_MODE=defer" in result.stdout
 
 
+def test_lingbot_v2_env_streams_long_torch_install() -> None:
+    text = (ROOT / "docker/create_lingbot_v2_env.sh").read_text(encoding="utf-8")
+    assert 'conda run --no-capture-output -n "${ENV_NAME}" python -m pip install' in text
+    assert "Installing PyTorch 2.8.0 CUDA stack; progress follows live." in text
+
+
 def test_lingbot_v2_image_builds_flash_attention_on_focal() -> None:
     dockerfile = (ROOT / "Dockerfile.lingbot_v2").read_text(encoding="utf-8")
     build_script = (ROOT / "docker/build_lingbot_v2.sh").read_text(encoding="utf-8")

@@ -36,12 +36,14 @@ case "${FLASH_ATTN_INSTALL_MODE}" in
 esac
 
 if ! conda env list | awk '{print $1}' | grep -Fxq "${ENV_NAME}"; then
+    echo "[LingBot-v2 env] Creating Python 3.12 conda environment: ${ENV_NAME}"
     conda create -n "${ENV_NAME}" python=3.12 pip -y
 fi
 
 # Install the exact Torch stack first, so wheel resolution reads Torch's CUDA
 # runtime and ABI instead of guessing from the host driver's nvidia-smi output.
-conda run -n "${ENV_NAME}" python -m pip install \
+echo "[LingBot-v2 env] Installing PyTorch 2.8.0 CUDA stack; progress follows live."
+conda run --no-capture-output -n "${ENV_NAME}" python -m pip install \
     torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 \
     torchdata==0.11.0 torchcodec==0.6.0
 
@@ -50,6 +52,7 @@ if [[ "${defer_flash_attn}" == "1" ]]; then
     echo "Deferring flash-attn installation to Dockerfile.lingbot_v2."
     setup_args+=(--skip-flash-attn)
 elif [[ "${use_official_wheel}" == "1" ]]; then
+    echo "[LingBot-v2 env] Resolving the official flash-attn 2.8.3 wheel."
     resolver_output="$(
         conda run -n "${ENV_NAME}" python \
             "${REPO_ROOT}/docker/flash_attn_wheel.py" \
@@ -70,4 +73,5 @@ else
     echo "Host glibc ${host_glibc}: building flash-attn 2.8.3 from source for Classic compatibility."
 fi
 
+echo "[LingBot-v2 env] Installing upstream training and depth dependencies."
 bash "${REPO_ROOT}/third_party/lingbot-vla-v2/tools/create_train_env.sh" "${setup_args[@]}"
