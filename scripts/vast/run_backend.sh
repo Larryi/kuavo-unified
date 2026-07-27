@@ -634,7 +634,7 @@ run_lingbot_v2() {
     "timestamp=${RUN_ID}" \
     "training.output_directory=${output_base}" \
     "training.batch_size=${TRAIN_BATCH_SIZE:-1}" \
-    "training.accumulation_steps=${GRAD_ACCUM_STEPS:-8}" \
+    "training.accumulation_steps=${GRAD_ACCUM_STEPS:-1}" \
     "training.max_training_step=${TRAIN_MAX_STEPS:-10000}" \
     "training.max_epoch=${TRAIN_EPOCHS:-10}" \
     "training.resume=$([[ "${RESUME_MODE}" == "hf" ]] && echo true || echo false)" \

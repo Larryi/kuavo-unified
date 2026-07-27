@@ -31,7 +31,7 @@ data:
 train:
   output_dir: outputs/train/lingbot_v2_task2_bimanual
   moe_monitor_interval: 1000
-  enable_gradient_checkpointing: true
+  enable_gradient_checkpointing: false
   precompute_grid_thw: true
   vlm_causal: true
   vlm_fsdp: false
@@ -65,7 +65,7 @@ train:
   chunk_size: 50
   loss_type: fm
   optimizer: adamw
-  lr: 5.0e-5
+  lr: 1.0e-5
   lr_decay_style: cosine
   lr_warmup_ratio: 0.02
   lr_decay_ratio: 1.0
