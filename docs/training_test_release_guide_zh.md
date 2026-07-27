@@ -521,6 +521,19 @@ checkpoint 中的 `wandb_id.txt` 自动读取。若旧仓库没有该文件，�
 OpenPI 恢复 optimizer、全局 step 和其他完整状态后，不会再次 warmup。
 向导询问续训起始 LR（应填写原调度在当前 step 的实际值，默认
 `2.5e-6`），然后选择保持常数或在追加步数内继续 cosine 衰减至目标值。
+
+OpenPI 仓库存在多个已完成 step 时，向导会按从新到旧列出所有带
+`_CHECKPOINT_METADATA` 的 step，由用户明确选择。选择 step 后还有两种模式：
+
+- 恢复 optimizer/LearningState：仅下载所选 step 和 `wandb_id.txt`，恢复
+  params、optimizer、全局 step 和 W&B，并按“所选 step + 追加步数”续训；
+- 仅加载 params：仅下载所选 step，把其 `params` 作为新训练的
+  weight loader，重置 optimizer/LearningState/全局 step，创建新的输出目录
+  和 W&B run，并从 step 0 使用用户新输入的 warmup、峰值 LR 和 cosine
+  schedule。数据集或混合比例改变时优先使用这一模式。
+
+权重热启动不是“完整状态 resume”：它有意不继承旧 optimizer 的 momentum、
+学习率计数、RNG 和训练进度，但仍保留所选 checkpoint 的模型参数。
 仓库必须包含对应 trainer 的完整状态：
 
 | algorithm | 至少需要的状态标记 |

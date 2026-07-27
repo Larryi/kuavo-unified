@@ -17,6 +17,7 @@ from tools.vast_job_wizard import (
     JOB_MATRIX,
     latest_openpi_checkpoint_step,
     normalize_dataset_mix,
+    openpi_checkpoint_steps,
     resume_repo_has_training_state,
     select_training_datasets,
 )
@@ -317,6 +318,9 @@ def test_openpi_resume_uses_checkpoint_wandb_id_and_lr_tail() -> None:
     assert '"LR_TAIL_START_STEP": str(openpi_tail_start_step)' in text
     assert '"LR_TAIL_DECAY_STEPS": str(openpi_tail_decay_steps)' in text
     assert '"LR_TAIL_DECAY_LR": str(openpi_tail_decay_lr)' in text
+    assert "选择 OpenPI checkpoint step（最新排在最前）" in text
+    assert 'openpi_resume_state_mode = "full" if restore_learning_state else "weights_only"' in text
+    assert '"OPENPI_RESUME_STATE_MODE": openpi_resume_state_mode' in text
 
     train_text = OPENPI_PIPELINE.parent.parent.joinpath("train.py").read_text(
         encoding="utf-8"
@@ -327,9 +331,11 @@ def test_openpi_resume_uses_checkpoint_wandb_id_and_lr_tail() -> None:
     assert "shutil.rmtree(upload_cache)" in pipeline_text
     assert "Primary training failure (last 80 log lines)" in pipeline_text
     assert "skipping fallback upload" in pipeline_text
-    assert 'resume_staging_dir="${run_dir}.hf-download"' in pipeline_text
+    assert 'resume_staging_dir="${resume_download_dir}.hf-download"' in pipeline_text
     assert ".kuavo_hf_resume_complete" in pipeline_text
-    assert "staging.replace(run_dir)" in pipeline_text
+    assert "staging.replace(download_dir)" in pipeline_text
+    assert 'RESUME_STATE_MODE}" == "weights_only"' in pipeline_text
+    assert 'allow_patterns=allow_patterns' in pipeline_text
     assert "HF_HUB_DISABLE_XET=1" in pipeline_text
     assert 'RESUME_HF_DOWNLOAD_WORKERS:=4' in pipeline_text
     assert 'retry "${RESUME_DOWNLOAD_RETRIES}" download_resume_checkpoint' in pipeline_text
@@ -449,6 +455,7 @@ def test_latest_openpi_checkpoint_step_uses_finalized_step_marker() -> None:
         "checkpoints/pi05_kuavo/run_a/10000/_CHECKPOINT_METADATA",
         "checkpoints/pi05_kuavo/run_a/11000/params/_METADATA",
     ]
+    assert openpi_checkpoint_steps(files) == [9000, 10000]
     assert latest_openpi_checkpoint_step(files) == 10000
 
 

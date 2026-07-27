@@ -92,6 +92,10 @@ resume 仓库必须包含 optimizer、processor、RNG/accelerator 或 DCP 等完
 生成，W&B 身份从仓库中的 `wandb_id.txt` 自动恢复。旧仓库缺失该文件时，
 可输入原 W&B run ID，或留空创建新的 W&B run。恢复后的全局 step
 直接进入一段无 warmup 的 LR tail，可选择保持当前 LR 或继续 cosine 衰减。
+若仓库包含多个已完成 Orbax step，交互向导允许选择任意一个。随后可选择
+完整恢复 optimizer/LearningState，或只加载该 step 的 `params` 并重置
+optimizer、全局 step、LR schedule 和 W&B。后者适用于更换数据集或改变
+数据分布的权重热启动。
 OpenPI checkpoint 会先进入 `.hf-download` staging 目录；只有完整下载成功
 才替换训练目录。中断并重启会继续 staging 下载，避免 Orbax 读取半个
 Zstd/OCDBT 分片。resume 下载默认禁用可能悬挂的 Xet 传输，改走带超时和

@@ -66,20 +66,26 @@ def resume_repo_has_training_state(algorithm: str, files: Iterable[str]) -> bool
     return any(any(marker in path for marker in markers) for path in files)
 
 
-def latest_openpi_checkpoint_step(files: Iterable[str]) -> int | None:
-    """Return the newest finalized Orbax step uploaded at any repo prefix."""
-    steps: list[int] = []
+def openpi_checkpoint_steps(files: Iterable[str]) -> list[int]:
+    """Return every finalized Orbax step uploaded at any repo prefix."""
+    steps: set[int] = set()
     for name in files:
         parts = name.strip("/").split("/")
         if "_CHECKPOINT_METADATA" not in parts:
             continue
         marker_index = parts.index("_CHECKPOINT_METADATA")
-        steps.extend(
+        steps.update(
             int(part)
             for part in parts[:marker_index]
             if part.isdigit()
         )
-    return max(steps) if steps else None
+    return sorted(steps)
+
+
+def latest_openpi_checkpoint_step(files: Iterable[str]) -> int | None:
+    """Return the newest finalized Orbax step uploaded at any repo prefix."""
+    steps = openpi_checkpoint_steps(files)
+    return steps[-1] if steps else None
 
 
 def choose(prompt: str, values: list[str]) -> str:
@@ -344,7 +350,8 @@ def main() -> int:
     openpi_tail_decay_steps: int | None = None
     openpi_tail_decay_lr: str | None = None
     openpi_wandb_run_id = ""
-    if yes_no("是否从 HF 完整训练状态继续训练？"):
+    openpi_resume_state_mode = "full"
+    if yes_no("是否从 HF checkpoint 接续或热启动训练？"):
         resume_repo = select_repositories(
             "选择或输入 resume 模型仓库",
             models,
@@ -357,36 +364,53 @@ def main() -> int:
                 f"仓库 {resume_repo} 未找到 {algorithm} 完整训练状态标记：{markers}"
             )
         if algorithm == "openpi":
-            openpi_resume_from_step = latest_openpi_checkpoint_step(files)
-            if openpi_resume_from_step is None:
+            available_steps = openpi_checkpoint_steps(files)
+            if not available_steps:
                 raise SystemExit(
-                    f"仓库 {resume_repo} 中无法确定最新 OpenPI Orbax step"
+                    f"仓库 {resume_repo} 中未找到已完成的 OpenPI Orbax step"
                 )
-            while True:
-                raw = input(
-                    f"检测到最新 OpenPI step={openpi_resume_from_step}；"
-                    "追加训练多少步？ [10000]: "
-                ).strip() or "10000"
-                if raw.isdigit() and int(raw) > 0:
-                    openpi_resume_additional_steps = int(raw)
-                    openpi_target_steps = (
-                        openpi_resume_from_step + openpi_resume_additional_steps
-                    )
-                    print(
-                        "OpenPI 续训目标："
-                        f"{openpi_resume_from_step} + "
-                        f"{openpi_resume_additional_steps} = "
-                        f"{openpi_target_steps} total steps"
-                    )
-                    break
-                print("追加训练步数必须是正整数。")
-            resume_run_id = re.sub(r"[^A-Za-z0-9._-]", "_", resume_repo.rsplit("/", 1)[-1])
-            if any(path.rsplit("/", 1)[-1] == "wandb_id.txt" for path in files):
+            openpi_resume_from_step = int(
+                choose(
+                    "选择 OpenPI checkpoint step（最新排在最前）",
+                    [str(step) for step in reversed(available_steps)],
+                )
+            )
+            restore_learning_state = yes_no(
+                "恢复 optimizer/LearningState 和全局 step？"
+                "（选 n 仅加载模型 params，并从新 step 0 开始）",
+                default=True,
+            )
+            openpi_resume_state_mode = "full" if restore_learning_state else "weights_only"
+            repo_slug = re.sub(r"[^A-Za-z0-9._-]", "_", resume_repo.rsplit("/", 1)[-1])
+            if restore_learning_state:
+                openpi_resume_additional_steps = positive_int(
+                    f"从 step={openpi_resume_from_step} 追加训练多少步", 10000
+                )
+                openpi_target_steps = openpi_resume_from_step + openpi_resume_additional_steps
+                print(
+                    f"OpenPI 完整续训目标：{openpi_resume_from_step} + "
+                    f"{openpi_resume_additional_steps} = {openpi_target_steps} total steps"
+                )
+                resume_run_id = repo_slug
+            else:
+                openpi_target_steps = positive_int(
+                    "Optimizer 重置后训练多少个新 step", 30000
+                )
+                openpi_resume_additional_steps = openpi_target_steps
+                resume_run_id = f"{repo_slug}-step{openpi_resume_from_step}-reset"
+                print(
+                    f"OpenPI 权重热启动：加载 step={openpi_resume_from_step} params；"
+                    f"optimizer/LearningState 重置，新训练 step 0..{openpi_target_steps}"
+                )
+
+            if restore_learning_state and any(
+                path.rsplit("/", 1)[-1] == "wandb_id.txt" for path in files
+            ):
                 print(
                     f"OpenPI 本地恢复目录：{resume_run_id}；"
                     "W&B run ID 将从 checkpoint 的 wandb_id.txt 自动恢复"
                 )
-            else:
+            elif restore_learning_state:
                 print(f"OpenPI 本地恢复目录：{resume_run_id}")
                 openpi_wandb_run_id = input(
                     "checkpoint 未包含 wandb_id.txt；输入原 W&B run ID"
@@ -396,6 +420,8 @@ def main() -> int:
                     r"[A-Za-z0-9_-]+", openpi_wandb_run_id
                 ):
                     raise SystemExit("W&B run ID 只能包含字母、数字、下划线和连字符")
+            else:
+                print(f"OpenPI 新训练输出目录：{resume_run_id}；W&B 将创建新 run")
         else:
             resume_run_id = input("输入原训练 RUN_ID（用于恢复到同一输出目录）: ").strip()
         if not re.fullmatch(r"[A-Za-z0-9._-]+", resume_run_id):
@@ -405,7 +431,7 @@ def main() -> int:
     if algorithm == "openpi":
         if openpi_target_steps is None:
             openpi_target_steps = positive_int("OpenPI 总训练步数", 30000)
-        if openpi_resume_from_step is not None:
+        if openpi_resume_from_step is not None and openpi_resume_state_mode == "full":
             current_lr = nonnegative_float(
                 "OpenPI 续训起始学习率（应为原调度当前值）", "2.5e-6"
             )
@@ -519,6 +545,7 @@ def main() -> int:
                 {
                     "OPENPI_RESUME_FROM_STEP": str(openpi_resume_from_step),
                     "OPENPI_RESUME_ADDITIONAL_STEPS": str(openpi_resume_additional_steps),
+                    "OPENPI_RESUME_STATE_MODE": openpi_resume_state_mode,
                 }
             )
 
