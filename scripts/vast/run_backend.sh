@@ -40,6 +40,16 @@ case "${MODEL_BACKEND}" in
 esac
 source "${ROOT}/scripts/vast/job_profile.sh"
 apply_vast_job_profile
+
+# uv treats a bare name such as "python" as a virtual-environment selector.
+# Resolve it to the concrete interpreter used by the pipeline so classic
+# backends can install into the existing VastAI system environment.
+if [[ "${PYTHON_BIN}" != */* ]]; then
+  PYTHON_BIN="$(command -v "${PYTHON_BIN}")"
+fi
+PYTHON_BIN="$("${PYTHON_BIN}" -c 'import sys; print(sys.executable)')"
+export PYTHON_BIN
+
 for value in DRY_RUN AUTO_STOP_INSTANCE AUTO_STOP_ON_FAILURE AUTO_STOP_ON_UPLOAD_FAILURE MODEL_REPO_PRIVATE PREPARE_ENV; do
   [[ "${!value}" == "0" || "${!value}" == "1" ]] || {
     echo "${value} must be 0 or 1, got ${!value}" >&2

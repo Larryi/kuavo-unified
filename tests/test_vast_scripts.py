@@ -254,6 +254,7 @@ def test_openpi_pipeline_has_no_default_gpu_model_lock() -> None:
     assert "Parallel norm-stat loading failed" in text
     assert "--state-action-only" in text
     assert "Reused OpenPI norm cache" in text
+
     assert "api.dataset_info(repo_id).sha" in text
     norm_script = (
         ROOT / "third_party" / "openpi-kuavo" / "scripts" / "compute_norm_stats.py"
@@ -274,6 +275,13 @@ def test_openpi_pipeline_has_no_default_gpu_model_lock() -> None:
     assert 'if [[ "${CUDA_NVCC_VERSION}" != "auto" ]]' in text
     assert '--lr-schedule.peak-lr "${PEAK_LR}"' in text
     assert '--lr-schedule.decay-steps "${LR_DECAY_STEPS}"' in text
+
+
+def test_classic_environment_resolves_absolute_python_for_uv() -> None:
+    text = REMOTE_RUNNER.read_text(encoding="utf-8")
+    assert 'PYTHON_BIN="$(command -v "${PYTHON_BIN}")"' in text
+    assert "print(sys.executable)" in text
+    assert 'uv pip install --python "${PYTHON_BIN}"' in text
 
 
 def test_restore_passes_persistent_credentials_file() -> None:
