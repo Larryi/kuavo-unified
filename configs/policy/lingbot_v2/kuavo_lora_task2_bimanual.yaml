@@ -31,7 +31,7 @@ data:
 train:
   output_dir: outputs/train/lingbot_v2_task2_bimanual
   moe_monitor_interval: 1000
-  enable_gradient_checkpointing: false
+  enable_gradient_checkpointing: true
   precompute_grid_thw: true
   vlm_causal: true
   vlm_fsdp: false

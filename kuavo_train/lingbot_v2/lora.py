@@ -38,7 +38,7 @@ DEFAULT_FULL_TRAIN_PATTERNS = (
 
 @dataclass(frozen=True)
 class LingbotV2LoraSettings:
-    enabled: bool = True
+    enabled: bool = False
     rank: int = 8
     alpha: int = 16
     dropout: float = 0.0
@@ -52,7 +52,7 @@ class LingbotV2LoraSettings:
             return cls()
         data = json.loads(raw)
         return cls(
-            enabled=bool(data.get("enabled", True)),
+            enabled=bool(data.get("enabled", False)),
             rank=int(data.get("rank", 8)),
             alpha=int(data.get("alpha", 16)),
             dropout=float(data.get("dropout", 0.0)),
@@ -63,6 +63,17 @@ class LingbotV2LoraSettings:
 
 def apply_lora(model: torch.nn.Module, settings: LingbotV2LoraSettings) -> torch.nn.Module:
     if not settings.enabled:
+        model.requires_grad_(True)
+        trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        total = sum(p.numel() for p in model.parameters())
+        if trainable != total:
+            raise RuntimeError(
+                "LingBot-VLA v2 full fine-tuning did not enable every parameter"
+            )
+        print(
+            f"[Kuavo Full FT] trainable={trainable:,}/{total:,} "
+            "(100.000%); torch.compile follows upstream train.use_compile"
+        )
         return model
 
     model.requires_grad_(False)

@@ -34,5 +34,5 @@ policy:
     HF_HUB_OFFLINE: "1"
     TRANSFORMERS_OFFLINE: "1"
     KUAVO_LINGBOT_V2_ATTENTION_BACKEND: auto
-    KUAVO_LINGBOT_V2_LORA: '{"enabled":true,"rank":8,"alpha":16,"dropout":0.0}'
+    KUAVO_LINGBOT_V2_LORA: '{"enabled":false}'
   extra_args: []
