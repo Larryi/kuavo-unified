@@ -137,6 +137,11 @@ LingBot-v2 会自动创建 Python 3.12/PyTorch 2.8 环境，并下载：
 - `Qwen/Qwen3-VL-4B-Instruct`（tokenizer/processor）；
 - `Ruicheng/moge-2-vitb-normal`（`model.pt`）。
 
+MoGe 的 `utils3d` 必须使用其锁定的
+`EasternJournalist/utils3d@3fab839f...`（发行版本 1.3）。不要安装 PyPI
+上的同名 `utils3d 0.1.x`；后者是另一个项目，依赖当前 Python 3.12 环境
+没有可用 wheel 的旧 Open3D。
+
 这里保留 Conda 主要为了兼容上游 `create_train_env.sh` 的激活逻辑，以及
 后续通过 `conda-pack` 生成可搬运环境并进入 Ubuntu 20.04/ROS Noetic
 部署镜像；pip 仍负责安装 PyTorch 和绝大多数 Python 包。Conda 并非算法

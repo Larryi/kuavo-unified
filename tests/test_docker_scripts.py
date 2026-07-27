@@ -218,6 +218,15 @@ def test_lingbot_v2_env_streams_long_torch_install() -> None:
     assert "Installing PyTorch 2.8.0 CUDA stack; progress follows live." in text
 
 
+def test_lingbot_v2_uses_moge_pinned_utils3d_not_pypi_namesake() -> None:
+    text = (
+        ROOT / "third_party" / "lingbot-vla-v2" / "tools" / "create_train_env.sh"
+    ).read_text(encoding="utf-8")
+    assert "EasternJournalist/utils3d.git@3fab839f0be9931dac7c8488eb0e1600c236e183" in text
+    assert 'version("utils3d") == "1.3"' in text
+    assert "morgbd_clean/3rd/utils3d" not in text
+
+
 def test_lingbot_v2_image_builds_flash_attention_on_focal() -> None:
     dockerfile = (ROOT / "Dockerfile.lingbot_v2").read_text(encoding="utf-8")
     build_script = (ROOT / "docker/build_lingbot_v2.sh").read_text(encoding="utf-8")
