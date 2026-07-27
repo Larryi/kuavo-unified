@@ -13,21 +13,6 @@ from omegaconf import DictConfig
 from kuavo_train.wrapper.policy.lingbot import CustomLingbotConfigWrapper, CustomLingbotPolicyWrapper
 
 
-def _optional_asset_args(environment: dict[str, str] | None = None) -> list[str]:
-    environment = os.environ if environment is None else environment
-    overrides = {
-        "LINGBOT_V2_MOGE_PATH": "--train.align_params.depth.moge_path",
-        "LINGBOT_V2_DEPTH_PATH": "--train.align_params.depth.morgbd_path",
-        "LINGBOT_V2_DINO_CKPT": "--train.align_params.video.ckpt_path",
-        "LINGBOT_V2_DINO_CONFIG": "--train.align_params.video.config_path",
-    }
-    args: list[str] = []
-    for env_name, argument in overrides.items():
-        if value := environment.get(env_name):
-            args.extend([argument, value])
-    return args
-
-
 def _available_port(preferred: int) -> int:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -56,6 +41,10 @@ def main(cfg: DictConfig) -> None:
         "KUAVO_LINGBOT_V2_ATTENTION_BACKEND",
         "CUDA_VISIBLE_DEVICES",
         "LINGBOT_V2_ROOT",
+        "LINGBOT_V2_MOGE_PATH",
+        "LINGBOT_V2_DEPTH_PATH",
+        "LINGBOT_V2_DINO_CKPT",
+        "LINGBOT_V2_DINO_CONFIG",
     ):
         if os.getenv(key):
             env[key] = os.environ[key]
@@ -125,7 +114,6 @@ def main(cfg: DictConfig) -> None:
     ]
     if norm_stats := os.getenv("LINGBOT_V2_NORM_STATS", "").strip():
         extra_args.extend(["--data.norm_stats_file", norm_stats])
-    extra_args.extend(_optional_asset_args())
     extra_args.extend(str(item) for item in policy_cfg.get("extra_args", []))
 
     code = CustomLingbotPolicyWrapper(wrapper_cfg).launch(repo_root=repo_root, extra_args=extra_args)

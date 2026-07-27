@@ -7,7 +7,6 @@ import subprocess
 
 import pytest
 
-from kuavo_train.train_lingbot_v2 import _optional_asset_args
 from tools.vast_bootstrap import (
     BootstrapError,
     options_without_forwarding,
@@ -563,26 +562,22 @@ def test_secret_reader_echoes_asterisks() -> None:
     assert "termios.tcsetattr" in text
 
 
-def test_lingbot_v2_cloud_assets_override_developer_paths() -> None:
-    args = _optional_asset_args(
-        {
-            "LINGBOT_V2_MOGE_PATH": "/workspace/models/moge/model.pt",
-            "LINGBOT_V2_DEPTH_PATH": "/workspace/models/v2/depth/model.pt",
-            "LINGBOT_V2_DINO_CKPT": "/workspace/models/v2/dino/teacher.pth",
-            "LINGBOT_V2_DINO_CONFIG": "/workspace/models/v2/dino/config.yaml",
-        }
-    )
-
-    assert args == [
-        "--train.align_params.depth.moge_path",
-        "/workspace/models/moge/model.pt",
-        "--train.align_params.depth.morgbd_path",
-        "/workspace/models/v2/depth/model.pt",
-        "--train.align_params.video.ckpt_path",
-        "/workspace/models/v2/dino/teacher.pth",
-        "--train.align_params.video.config_path",
-        "/workspace/models/v2/dino/config.yaml",
-    ]
+def test_lingbot_v2_cloud_assets_are_forwarded_as_environment() -> None:
+    launcher = (
+        ROOT / "kuavo_train" / "train_lingbot_v2.py"
+    ).read_text(encoding="utf-8")
+    trainer = (
+        ROOT / "kuavo_train" / "lingbot_v2" / "train_lingbotvla_lora.py"
+    ).read_text(encoding="utf-8")
+    for name in (
+        "LINGBOT_V2_MOGE_PATH",
+        "LINGBOT_V2_DEPTH_PATH",
+        "LINGBOT_V2_DINO_CKPT",
+        "LINGBOT_V2_DINO_CONFIG",
+    ):
+        assert name in launcher
+        assert name in trainer
+    assert "--train.align_params.depth.moge_path" not in launcher
 
 
 def test_lingbot_cloud_downloads_qwen_processor_without_base_weights() -> None:

@@ -24,6 +24,26 @@ from kuavo_train.lingbot_v2.dependency_checks import validate_utils3d
 from kuavo_train.dataset_mixture import VirtualWeightedDataset, load_dataset_sources
 
 
+_ASSET_PATHS = {
+    "LINGBOT_V2_MOGE_PATH": ("depth", "moge_path"),
+    "LINGBOT_V2_DEPTH_PATH": ("depth", "morgbd_path"),
+    "LINGBOT_V2_DINO_CKPT": ("video", "ckpt_path"),
+    "LINGBOT_V2_DINO_CONFIG": ("video", "config_path"),
+}
+
+
+def _apply_asset_paths(arguments, environment=None) -> None:
+    """Apply cloud asset locations after the upstream YAML has been parsed."""
+    environment = os.environ if environment is None else environment
+    align_params = arguments.train.align_params
+    if not isinstance(align_params, dict):
+        raise TypeError("train.align_params must be a dictionary")
+    for env_name, (section, key) in _ASSET_PATHS.items():
+        value = str(environment.get(env_name, "")).strip()
+        if value:
+            align_params.setdefault(section, {})[key] = value
+
+
 def _load_upstream_trainer():
     root = Path(os.environ.get("LINGBOT_V2_ROOT", "")).expanduser()
     trainer_path = root / "tasks/vla/train_lingbotvla.py"
@@ -48,6 +68,15 @@ def main() -> None:
     attention_backend = prepare_attention_imports()
     trainer = _load_upstream_trainer()
     patch_v2_attention_constructors(attention_backend)
+
+    original_parse_args = trainer.parse_args
+
+    def parse_args_with_cloud_assets(*args, **kwargs):
+        arguments = original_parse_args(*args, **kwargs)
+        _apply_asset_paths(arguments)
+        return arguments
+
+    trainer.parse_args = parse_args_with_cloud_assets
 
     original_build = trainer.build_foundation_model
 
