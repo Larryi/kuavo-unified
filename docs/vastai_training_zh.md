@@ -113,6 +113,11 @@ LingBot-v1 的 resume 仓库必须保存完整
 | `lingbot-v1` | `run_lingbot_v1_full_pipeline.sh` | LingBot-VLA-4B、Qwen2.5-VL-3B |
 | `lingbot-v2` | unified v2 launcher | LingBot-VLA-v2-6B、Qwen3-VL-4B、MoGe-2；Depth 与 DINO teacher 位于 v2 基础仓库 |
 
+DP/ACT 会固定安装 PyTorch `2.7.1`、torchvision `0.22.1` 的官方 cu128
+wheel，并在训练前验证 CUDA、GPU capability、`sm_120` 架构和真实矩阵
+乘法。默认 batch size 按每卡显存自动设置为
+`24G→32 / 32G→40 / 48G→64 / 80G→128`；`TRAIN_BATCH_SIZE` 可显式覆盖。
+
 所有 HF 仓库 ID 和目标位置均可通过私有环境文件覆盖。LingBot-v2 的
 MoGe、Depth 和 DINO 路径会显式传给上游 trainer，避免继承开发机上的
 `/mnt/pqssd` 路径。DP/ACT 不需要 VLA 基础权重；其 ResNet18 权重由对应

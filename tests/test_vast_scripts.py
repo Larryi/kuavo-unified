@@ -282,6 +282,13 @@ def test_classic_environment_resolves_absolute_python_for_uv() -> None:
     assert 'PYTHON_BIN="$(command -v "${PYTHON_BIN}")"' in text
     assert "print(sys.executable)" in text
     assert 'uv pip install --python "${PYTHON_BIN}"' in text
+    assert 'CLASSIC_TORCH_VERSION:=2.7.1' in text
+    assert 'CLASSIC_TORCHVISION_VERSION:=0.22.1' in text
+    assert 'CLASSIC_PYTORCH_INDEX_URL:=https://download.pytorch.org/whl/cu128' in text
+    assert "Blackwell {capability} requires a CUDA 12.8+ PyTorch wheel" in text
+    assert '"sm_120" in torch.cuda.get_arch_list()' in text
+    assert "memory_mb >= 30000" in text
+    assert "TRAIN_BATCH_SIZE=40" in text
 
 
 def test_restore_passes_persistent_credentials_file() -> None:

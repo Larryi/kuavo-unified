@@ -426,6 +426,22 @@ bash scripts/vast/restore_and_launch.sh
 8. 选择 GPU ID，例如单卡 `0` 或多卡 `0,1`；
 9. 审核不含凭据的任务清单，再确认环境恢复和训练启动。
 
+DP/ACT 云端环境固定从 PyTorch 官方 cu128 index 安装
+`torch==2.7.1` 和 `torchvision==0.22.1`，随后执行 CUDA availability、
+compute capability、编译架构和实际 GPU matmul 预检。RTX 5090
+（Blackwell `sm_120`）要求 wheel CUDA 至少为 12.8；不满足时在下载数据和
+正式训练前失败。默认单卡 batch size 按显存选择：
+
+| 单卡显存 | DP/ACT 默认 batch size |
+|---:|---:|
+| 小于 30 GB（如 RTX 4090 24 GB） | 32 |
+| 30–44 GB（如 RTX 5090 32 GB） | 40 |
+| 45–69 GB | 64 |
+| 70 GB 及以上（如 H100 80 GB） | 128 |
+
+显式设置 `TRAIN_BATCH_SIZE` 会覆盖自动值；遇到特定数据增强、更多相机或
+模型配置导致 OOM 时，应优先手动降低。
+
 OpenPI 会明确询问总训练步数、warmup 步数、峰值学习率、cosine decay
 步数和最终学习率。当前默认值依次为
 `30000 / 1000 / 2.5e-5 / 30000 / 2.5e-6`。这些问题只用于新训练。

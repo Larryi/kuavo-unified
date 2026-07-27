@@ -23,6 +23,9 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 : "${VAST_API_KEY:=}"
 : "${HF_DOWNLOAD_WORKERS:=16}"
 : "${PYTHON_BIN:=python}"
+: "${CLASSIC_TORCH_VERSION:=2.7.1}"
+: "${CLASSIC_TORCHVISION_VERSION:=0.22.1}"
+: "${CLASSIC_PYTORCH_INDEX_URL:=https://download.pytorch.org/whl/cu128}"
 : "${PREPARE_ENV:=1}"
 : "${RESUME_MODE:=none}"
 : "${RESUME_REPO:=}"
@@ -86,11 +89,15 @@ describe_profile() {
     dp)
       echo "Pretrained: torchvision ResNet18 ImageNet weights (resolved by the training environment)"
       echo "Environment: requirements_train_cloud.txt"
+      echo "Torch: ${CLASSIC_TORCH_VERSION} / torchvision ${CLASSIC_TORCHVISION_VERSION} from cu128"
+      echo "Batch: ${TRAIN_BATCH_SIZE:-adaptive by per-GPU VRAM (24G=32, 32G=40, 48G=64, 80G=128)}"
       echo "Dispatch: configs/policy/${TRAIN_CONFIG_NAME:-dp_r1.yaml}"
       ;;
     act)
       echo "Pretrained: torchvision ResNet18 ImageNet weights (resolved by the training environment)"
       echo "Environment: requirements_train_cloud.txt"
+      echo "Torch: ${CLASSIC_TORCH_VERSION} / torchvision ${CLASSIC_TORCHVISION_VERSION} from cu128"
+      echo "Batch: ${TRAIN_BATCH_SIZE:-adaptive by per-GPU VRAM (24G=32, 32G=40, 48G=64, 80G=128)}"
       echo "Dispatch: configs/policy/${TRAIN_CONFIG_NAME:-act_config.yaml}"
       ;;
     openpi)
@@ -288,7 +295,70 @@ prepare_classic_environment() {
   [[ "${PREPARE_ENV}" == "1" ]] || return 0
   set_phase "prepare ${MODEL_BACKEND} environment"
   "${PYTHON_BIN}" -m pip install --upgrade uv
+  uv pip install --python "${PYTHON_BIN}" \
+    --index-url "${CLASSIC_PYTORCH_INDEX_URL}" \
+    "torch==${CLASSIC_TORCH_VERSION}" \
+    "torchvision==${CLASSIC_TORCHVISION_VERSION}"
   uv pip install --python "${PYTHON_BIN}" -r "${CODE_DIR}/requirements_train_cloud.txt"
+}
+
+validate_classic_cuda() {
+  set_phase "validate ${MODEL_BACKEND} CUDA environment"
+  "${PYTHON_BIN}" - <<'PY'
+import torch
+
+assert torch.cuda.is_available(), "PyTorch CUDA is unavailable"
+capability = torch.cuda.get_device_capability(0)
+wheel_cuda = tuple(int(part) for part in torch.version.cuda.split(".")[:2])
+if capability >= (12, 0):
+    assert wheel_cuda >= (12, 8), (
+        f"Blackwell {capability} requires a CUDA 12.8+ PyTorch wheel, "
+        f"got torch={torch.__version__}, CUDA={torch.version.cuda}"
+    )
+    assert "sm_120" in torch.cuda.get_arch_list(), torch.cuda.get_arch_list()
+x = torch.randn((1024, 1024), device="cuda")
+torch.cuda.synchronize()
+result = (x @ x).mean()
+torch.cuda.synchronize()
+print(
+    "Classic CUDA validation passed:",
+    {
+        "torch": torch.__version__,
+        "cuda": torch.version.cuda,
+        "gpu": torch.cuda.get_device_name(0),
+        "capability": capability,
+        "matmul": float(result),
+    },
+)
+PY
+}
+
+configure_classic_batch_size() {
+  if [[ -n "${TRAIN_BATCH_SIZE:-}" ]]; then
+    echo "Classic batch size: ${TRAIN_BATCH_SIZE} (explicit override)"
+    return
+  fi
+  local gpu_id="${selected_gpu_ids[0]}" memory_mb
+  memory_mb="$(nvidia-smi --id="${gpu_id}" --query-gpu=memory.total --format=csv,noheader,nounits | head -n 1 | tr -d ' ')"
+  [[ "${memory_mb}" =~ ^[1-9][0-9]*$ ]] || {
+    echo "Could not determine GPU memory for adaptive batch size" >&2
+    exit 4
+  }
+  case "${MODEL_BACKEND}:${memory_mb}" in
+    act:*) TRAIN_BATCH_SIZE=32 ;;
+    dp:*) TRAIN_BATCH_SIZE=32 ;;
+  esac
+  if (( memory_mb >= 30000 )); then
+    TRAIN_BATCH_SIZE=40
+  fi
+  if (( memory_mb >= 45000 )); then
+    TRAIN_BATCH_SIZE=64
+  fi
+  if (( memory_mb >= 70000 )); then
+    TRAIN_BATCH_SIZE=128
+  fi
+  export TRAIN_BATCH_SIZE
+  echo "Classic adaptive batch size: backend=${MODEL_BACKEND}, memory=${memory_mb} MiB, batch=${TRAIN_BATCH_SIZE}"
 }
 
 prepare_lingbot_v2_environment() {
@@ -544,6 +614,8 @@ Dataset: ${DATASET_REPO}"
 case "${MODEL_BACKEND}" in
   dp|act)
     prepare_classic_environment
+    validate_classic_cuda
+    configure_classic_batch_size
     require_command hf
     run_classic
     ;;
