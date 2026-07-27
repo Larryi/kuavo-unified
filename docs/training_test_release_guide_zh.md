@@ -530,7 +530,8 @@ OpenPI 仓库存在多个已完成 step 时，向导会按从新到旧列出所�
 - 仅加载 params：仅下载所选 step，把其 `params` 作为新训练的
   weight loader，重置 optimizer/LearningState/全局 step，创建新的输出目录
   和 W&B run，并从 step 0 使用用户新输入的 warmup、峰值 LR 和 cosine
-  schedule。数据集或混合比例改变时优先使用这一模式。
+  schedule；不会下载该 step 的 optimizer、RNG 等其他训练状态。数据集或
+  混合比例改变时优先使用这一模式。
 
 权重热启动不是“完整状态 resume”：它有意不继承旧 optimizer 的 momentum、
 学习率计数、RNG 和训练进度，但仍保留所选 checkpoint 的模型参数。

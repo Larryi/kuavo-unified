@@ -336,6 +336,7 @@ def test_openpi_resume_uses_checkpoint_wandb_id_and_lr_tail() -> None:
     assert "staging.replace(download_dir)" in pipeline_text
     assert 'RESUME_STATE_MODE}" == "weights_only"' in pipeline_text
     assert 'allow_patterns=allow_patterns' in pipeline_text
+    assert 'allow_patterns = [f"{selected_step}/params/**"]' in pipeline_text
     assert "HF_HUB_DISABLE_XET=1" in pipeline_text
     assert 'RESUME_HF_DOWNLOAD_WORKERS:=4' in pipeline_text
     assert 'retry "${RESUME_DOWNLOAD_RETRIES}" download_resume_checkpoint' in pipeline_text
