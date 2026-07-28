@@ -289,6 +289,10 @@ release 镜像仍以 `bash` 为默认入口，不自动发布动作。
 policy 类型、容器内 checkpoint 路径和基础镜像。默认标签为
 `kuavo-<task>-release:latest`。
 
+OpenPI release 会先把训练 checkpoint 精简为部署 checkpoint，只复制
+`params/`、`assets/` 和顶层 `_CHECKPOINT_METADATA`。`train_state/`
+（optimizer、学习率调度器、训练步数及其 Orbax 状态）不会进入推理镜像。
+
 ACT/DP 使用 run 根目录作为 `--checkpoint`，再通过
 `--checkpoint-subpath epochbest` 选择权重。release 只复制选中的 epoch、
 processor 与必要 config，不会把其他 epochs、optimizer、event log 一起

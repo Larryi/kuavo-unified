@@ -12,6 +12,7 @@ from tools.kuavo_docker import (
     render_config,
     reject_sensitive_files,
     stage_classic_checkpoint,
+    stage_openpi_checkpoint,
     stage_qwen_processor,
     validate_checkpoint,
     validate_qwen_bundle,
@@ -92,6 +93,51 @@ def test_release_classic_bundle_keeps_only_selected_epoch_and_processors(
     assert (staged / "policy_preprocessor.json").is_file()
     assert not (staged / "epochold").exists()
     assert not (staged / "learning_state.pth").exists()
+
+
+def test_release_openpi_bundle_excludes_training_state(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "14999"
+    params = checkpoint / "params"
+    params.mkdir(parents=True)
+    (params / "_METADATA").write_text("params", encoding="utf-8")
+    (params / "weights").write_bytes(b"weights")
+    assets = checkpoint / "assets"
+    assets.mkdir()
+    (assets / "norm_stats.json").write_text("{}", encoding="utf-8")
+    (checkpoint / "_CHECKPOINT_METADATA").write_text("step", encoding="utf-8")
+    train_state = checkpoint / "train_state"
+    train_state.mkdir()
+    (train_state / "optimizer").write_bytes(b"optimizer")
+
+    staged = tmp_path / "staged"
+    stage_openpi_checkpoint(checkpoint, staged)
+
+    assert (staged / "params/weights").read_bytes() == b"weights"
+    assert (staged / "params/_METADATA").is_file()
+    assert (staged / "assets/norm_stats.json").is_file()
+    assert (staged / "_CHECKPOINT_METADATA").is_file()
+    assert not (staged / "train_state").exists()
+    assert {item.name for item in staged.iterdir()} == {
+        "params",
+        "assets",
+        "_CHECKPOINT_METADATA",
+    }
+
+
+def test_release_openpi_bundle_requires_assets_and_step_metadata(
+    tmp_path: Path,
+) -> None:
+    checkpoint = tmp_path / "incomplete"
+    params = checkpoint / "params"
+    params.mkdir(parents=True)
+    (params / "_METADATA").write_text("params", encoding="utf-8")
+
+    with pytest.raises(UsageError, match="assets"):
+        stage_openpi_checkpoint(checkpoint, tmp_path / "staged")
+
+    (checkpoint / "assets").mkdir()
+    with pytest.raises(UsageError, match="_CHECKPOINT_METADATA"):
+        stage_openpi_checkpoint(checkpoint, tmp_path / "staged")
 
 
 def test_lingbot_incremental_checkpoint_is_rejected(tmp_path: Path) -> None:

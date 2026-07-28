@@ -971,6 +971,10 @@ scripts/package_inference_image \
 `task2+lingbot-v1` 和 `task1+lingbot-v2`；参数结构与上面的同算法示例
 相同，checkpoint/norm 必须来自对应任务，不能跨任务复用。
 
+OpenPI 打包时会自动执行部署 staging：只把 `params/`、`assets/` 和
+顶层 `_CHECKPOINT_METADATA` 固化进 release 镜像。占用空间较大的
+`train_state/` 只用于接续训练，不会进入最终推理镜像。
+
 LingBot release 只从 Qwen 目录提取 config、tokenizer 和 processor 文件，
 排除 `model*.safetensors` 基模权重。LingBot 的完整部署模型权重来自
 `hf_ckpt`。

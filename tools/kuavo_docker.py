@@ -773,6 +773,38 @@ def stage_classic_checkpoint(
     return destination
 
 
+def stage_openpi_checkpoint(
+    source: Path,
+    destination: Path,
+    *,
+    copy_function=shutil.copy2,
+) -> Path:
+    """Keep only the inference-time files from an OpenPI Orbax checkpoint."""
+    params = source / "params"
+    assets = source / "assets"
+    checkpoint_metadata = source / "_CHECKPOINT_METADATA"
+    if not (params / "_METADATA").is_file():
+        raise UsageError(f"OpenPI checkpoint 缺少 params/_METADATA: {source}")
+    if not assets.is_dir():
+        raise UsageError(f"OpenPI checkpoint 缺少推理所需 assets 目录: {source}")
+    if not checkpoint_metadata.is_file():
+        raise UsageError(f"OpenPI checkpoint 缺少 _CHECKPOINT_METADATA: {source}")
+
+    destination.mkdir()
+    shutil.copytree(
+        params,
+        destination / "params",
+        copy_function=copy_function,
+    )
+    shutil.copytree(
+        assets,
+        destination / "assets",
+        copy_function=copy_function,
+    )
+    copy_function(checkpoint_metadata, destination / "_CHECKPOINT_METADATA")
+    return destination
+
+
 def release_command(args: argparse.Namespace, spec: BackendSpec) -> None:
     ensure_ros_ready(spec, "release")
     task = resolve_task(args, spec)
@@ -816,6 +848,26 @@ def release_command(args: argparse.Namespace, spec: BackendSpec) -> None:
             stage_classic_checkpoint(
                 checkpoint, checkpoint_dir, args.checkpoint_subpath
             )
+        elif spec.key == "openpi":
+            if args.dry_run:
+                checkpoint_dir = Path("/planned/openpi-inference-checkpoint")
+            else:
+                # Orbax params are large. Build a filtered, same-filesystem
+                # hard-link tree so staging does not duplicate the weights.
+                openpi_staging = Path(
+                    stack.enter_context(
+                        tempfile.TemporaryDirectory(
+                            prefix=".kuavo-openpi-release-",
+                            dir=checkpoint.parent,
+                        )
+                    )
+                )
+                checkpoint_dir = openpi_staging / "checkpoint"
+                stage_openpi_checkpoint(
+                    checkpoint,
+                    checkpoint_dir,
+                    copy_function=os.link,
+                )
         manifest_dir = staging / "manifest"
         manifest_dir.mkdir()
         (manifest_dir / "release_manifest.json").write_text(
