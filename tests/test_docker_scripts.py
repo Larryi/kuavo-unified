@@ -252,3 +252,17 @@ def test_lingbot_training_compile_defaults_are_enabled() -> None:
     assert "use_compile: true" in v2_task2
     assert "save_hf_weights: true" in v2_task2
     assert "keep_last_checkpoints: 1" in v2_task2
+
+
+def test_lingbot_v2_uses_official_real_robot_optimizer_defaults() -> None:
+    configs = (
+        ROOT / "configs/policy/lingbot_v2/kuavo_lora.yaml",
+        ROOT / "configs/policy/lingbot_v2/kuavo_lora_task2_bimanual.yaml",
+    )
+    for config in configs:
+        text = config.read_text(encoding="utf-8")
+        assert "optimizer: muon" in text
+        assert "lr: 5.0e-5" in text
+        assert "lr_decay_style: constant" in text
+        assert "lr_warmup_ratio: 0.0" in text
+        assert "use_moe_expert_lr: true" in text

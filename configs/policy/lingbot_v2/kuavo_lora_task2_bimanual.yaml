@@ -49,7 +49,7 @@ train:
   router_activation: sigmoid
   routed_scaling_factor: 4.0
   use_shared_expert_gate: false
-  use_moe_expert_lr: false
+  use_moe_expert_lr: true
   data_parallel_mode: fsdp2
   rmpad: false
   rmpad_with_pos_ids: false
@@ -64,10 +64,10 @@ train:
   max_state_dim: 55
   chunk_size: 50
   loss_type: fm
-  optimizer: adamw
-  lr: 1.0e-5
-  lr_decay_style: cosine
-  lr_warmup_ratio: 0.02
+  optimizer: muon
+  lr: 5.0e-5
+  lr_decay_style: constant
+  lr_warmup_ratio: 0.0
   lr_decay_ratio: 1.0
   num_train_epochs: 10
   micro_batch_size: 1
