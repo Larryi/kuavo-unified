@@ -386,10 +386,6 @@ class MyTrainingArguments(TrainingArguments):
         default_factory=dict,
         metadata={"help": "The config of vaco"},
     )
-    use_ki: bool = field(
-        default=False,
-        metadata={"help": "Whether to apply knowledge insulating."},
-    )
     ignore_depth: bool = field(
         default=False,
         metadata={"help": "Whether to ignore depth model in FSDP2."},
@@ -913,7 +909,11 @@ def main():
 
                 with model_fwd_context:
                     # torch.cuda.synchronize()
-                    loss, vla_loss, depth_loss, loss_log, depth_preds = model(**micro_batch, vlm_causal = args.train.vlm_causal, use_ki = args.train.use_ki, depth_targets=depth_targets)
+                    loss, vla_loss, depth_loss, loss_log, depth_preds = model(
+                        **micro_batch,
+                        vlm_causal=args.train.vlm_causal,
+                        depth_targets=depth_targets,
+                    )
                     # torch.cuda.synchronize()
 
                     loss = loss / len(micro_batches)

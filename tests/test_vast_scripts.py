@@ -670,3 +670,4 @@ def test_lingbot_v1_trainer_forwards_required_model_config() -> None:
         "resize_imgs_with_padding",
     ):
         assert f"config_kwargs['{field_name}']" in trainer
+    assert "use_ki" not in trainer
