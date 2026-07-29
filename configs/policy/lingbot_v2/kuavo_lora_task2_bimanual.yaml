@@ -66,8 +66,9 @@ train:
   loss_type: fm
   optimizer: muon
   lr: 5.0e-5
-  lr_decay_style: constant
-  lr_warmup_ratio: 0.0
+  lr_min: 5.0e-6
+  lr_decay_style: cosine
+  lr_warmup_ratio: 0.03
   lr_decay_ratio: 1.0
   num_train_epochs: 10
   micro_batch_size: 1
