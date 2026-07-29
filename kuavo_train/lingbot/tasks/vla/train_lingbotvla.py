@@ -550,6 +550,13 @@ def main():
     config_kwargs['incremental_training'] = getattr(args.model, "incremental_training", False)
     config_kwargs['depth_incremental_training'] = getattr(args.model, "depth_incremental_training", False)
     config_kwargs['norm_qkv'] = getattr(args.train, "norm_qkv", False)
+    # Keep this adapter in sync with the required config_kwargs consumed by
+    # lingbotvla.models.auto.build_foundation_model.
+    config_kwargs['train_state_proj'] = getattr(args.train, "train_state_proj", True)
+    config_kwargs['adapt_to_pi_aloha'] = getattr(args.train, "adapt_to_pi_aloha", False)
+    config_kwargs['use_delta_joint_actions_aloha'] = getattr(args.train, "use_delta_joint_actions_aloha", False)
+    config_kwargs['train_expert_only'] = getattr(args.train, "train_expert_only", False)
+    config_kwargs['resize_imgs_with_padding'] = getattr(args.train, "resize_imgs_with_padding", [224, 224])
     config_kwargs['enable_expert_vision'] = args.train.enable_expert_vision
     config_kwargs['expert_vision_type'] = getattr(args.train, "expert_vision_type", None)
     config_kwargs['expert_vision_path'] = getattr(args.train, "expert_vision_path", None)

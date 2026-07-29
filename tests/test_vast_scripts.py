@@ -655,3 +655,18 @@ def test_lingbot_v1_norm_batch_is_independent_from_training_batch() -> None:
     assert '--data.num_workers "${NORM_NUM_WORKERS}"' in pipeline
     assert '--train.micro_batch_size "${NORM_BATCH_SIZE}"' in pipeline
     assert "images=disabled" in pipeline
+
+
+def test_lingbot_v1_trainer_forwards_required_model_config() -> None:
+    trainer = (
+        ROOT / "kuavo_train" / "lingbot" / "tasks" / "vla"
+        / "train_lingbotvla.py"
+    ).read_text(encoding="utf-8")
+    for field_name in (
+        "train_state_proj",
+        "adapt_to_pi_aloha",
+        "use_delta_joint_actions_aloha",
+        "train_expert_only",
+        "resize_imgs_with_padding",
+    ):
+        assert f"config_kwargs['{field_name}']" in trainer
