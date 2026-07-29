@@ -19,6 +19,8 @@ umask 077
 : "${KEEP_LAST_CHECKPOINTS:=1}"
 : "${DATALOADER_WORKERS:=8}"
 : "${DATALOADER_PREFETCH:=4}"
+: "${NORM_BATCH_SIZE:=128}"
+: "${NORM_NUM_WORKERS:=8}"
 : "${MIN_FREE_GB:=120}"
 : "${HEARTBEAT_SECONDS:=600}"
 : "${USE_COMPILE:=true}"
@@ -76,6 +78,8 @@ if [[ "${DRY_RUN}" == "1" ]]; then
         "${TRAINING_TASK}" "${LINGBOT_V1_TRAIN_CONFIG}" "${LINGBOT_V1_DATA_NAME}"
     printf '  work_root=%s\n  run_id=%s\n  gpu_ids=%s\n  gpu_count=%s\n' \
         "${WORK_ROOT}" "${RUN_ID}" "${GPU_IDS}" "${GPU_COUNT}"
+    printf '  train_micro_batch=%s\n  norm_batch=%s\n  norm_workers=%s\n' \
+        "${MICRO_BATCH_SIZE}" "${NORM_BATCH_SIZE}" "${NORM_NUM_WORKERS}"
     for required in HF_TOKEN CODEBASE_GDOWN_URL CODEBASE_SHA256 \
         LINGBOT_CODE_GDOWN_URL LINGBOT_CODE_SHA256 DATASET_REPO MODEL_REPO; do
         if [[ -n "${!required:-}" ]]; then
@@ -230,9 +234,13 @@ if (( ${#gpu_array[@]} != GPU_COUNT )); then
     echo "GPU_IDS contains ${#gpu_array[@]} devices, expected ${GPU_COUNT}" >&2
     exit 2
 fi
-for value in GPU_COUNT MICRO_BATCH_SIZE GRAD_ACCUM_STEPS NUM_EPOCHS SAVE_STEPS KEEP_LAST_CHECKPOINTS DATALOADER_WORKERS DATALOADER_PREFETCH; do
+for value in GPU_COUNT MICRO_BATCH_SIZE GRAD_ACCUM_STEPS NUM_EPOCHS SAVE_STEPS KEEP_LAST_CHECKPOINTS DATALOADER_WORKERS DATALOADER_PREFETCH NORM_BATCH_SIZE; do
     [[ "${!value}" =~ ^[1-9][0-9]*$ ]] || { echo "${value} must be a positive integer" >&2; exit 2; }
 done
+[[ "${NORM_NUM_WORKERS}" =~ ^[0-9]+$ ]] || {
+    echo "NORM_NUM_WORKERS must be a non-negative integer" >&2
+    exit 2
+}
 GLOBAL_BATCH_SIZE=$((MICRO_BATCH_SIZE * GPU_COUNT * GRAD_ACCUM_STEPS))
 
 free_gb="$(df -Pk "${WORK_ROOT}" | awk 'NR==2 {print int($4/1024/1024)}')"
@@ -454,13 +462,14 @@ print("Dataset validation passed; task metadata:", tasks)
 PY
 fi
 mkdir -p "$(dirname "${NORM_FILE}")"
+echo "LingBot norm settings: batch_size=${NORM_BATCH_SIZE}, workers=${NORM_NUM_WORKERS}, images=disabled"
 PYTHONPATH="${CODE_DIR}:${LINGBOT_ROOT}:${CODE_DIR}/third_party/lerobot/src:${PYTHONPATH:-}" \
 python "${CODE_DIR}/kuavo_train/lingbot/compute_mixture_norm.py" "${TRAIN_CONFIG}" \
     --data.data_name "${LINGBOT_V1_DATA_NAME}" \
     --data.train_path "${DATASET_ROOT}" \
     --data.norm_stats_file "${NORM_FILE}" \
-    --data.num_workers "${DATALOADER_WORKERS}" \
-    --train.micro_batch_size "${MICRO_BATCH_SIZE}" \
+    --data.num_workers "${NORM_NUM_WORKERS}" \
+    --train.micro_batch_size "${NORM_BATCH_SIZE}" \
     --train.chunk_size 50
 for required in \
     "${LINGBOT_MODEL_ROOT}/config.json" \

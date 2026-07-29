@@ -642,3 +642,14 @@ def test_lingbot_v1_norm_accepts_trainer_only_config_fields() -> None:
         in norm_script
     )
     assert "super().__post_init__()" in norm_script
+
+
+def test_lingbot_v1_norm_batch_is_independent_from_training_batch() -> None:
+    pipeline = (
+        ROOT / "scripts" / "run_lingbot_v1_full_pipeline.sh"
+    ).read_text(encoding="utf-8")
+    assert ': "${NORM_BATCH_SIZE:=128}"' in pipeline
+    assert ': "${NORM_NUM_WORKERS:=8}"' in pipeline
+    assert '--data.num_workers "${NORM_NUM_WORKERS}"' in pipeline
+    assert '--train.micro_batch_size "${NORM_BATCH_SIZE}"' in pipeline
+    assert "images=disabled" in pipeline
