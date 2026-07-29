@@ -313,12 +313,35 @@ fi
 
 cd "${CODE_DIR}"
 PIPELINE_PHASE="install dependencies"
+python_tag="$(
+    python -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")'
+)"
+if [[ "$(uname -m)" != "x86_64" ]]; then
+    echo "LingBot-v1 cu128 wheel installation currently requires x86_64" >&2
+    exit 4
+fi
+torch_wheel_name="torch-2.7.1+cu128-${python_tag}-${python_tag}-manylinux_2_28_x86_64.whl"
+torchvision_wheel_name="torchvision-0.22.1+cu128-${python_tag}-${python_tag}-manylinux_2_28_x86_64.whl"
+torch_wheel="${WORK_ROOT}/downloads/${torch_wheel_name}"
+torchvision_wheel="${WORK_ROOT}/downloads/${torchvision_wheel_name}"
+mkdir -p "${WORK_ROOT}/downloads"
+download_pytorch_wheel() {
+    local name="$1" destination="$2" partial="${2}.partial"
+    [[ -s "${destination}" ]] && return 0
+    retry 3 curl --fail --location --silent --show-error \
+        --retry 3 --retry-all-errors --continue-at - \
+        --output "${partial}" \
+        "https://download.pytorch.org/whl/cu128/${name/+/%2B}"
+    mv -- "${partial}" "${destination}"
+}
+download_pytorch_wheel "${torch_wheel_name}" "${torch_wheel}"
+download_pytorch_wheel "${torchvision_wheel_name}" "${torchvision_wheel}"
 retry 3 uv pip install --python "$(command -v python)" \
-    --index-url https://download.pytorch.org/whl/cu128 \
+    --default-index https://pypi.org/simple \
     --reinstall-package torch \
     --reinstall-package torchvision \
     --reinstall-package torchdata \
-    torch==2.7.1 torchvision==0.22.1 torchdata==0.11.0
+    "${torch_wheel}" "${torchvision_wheel}" torchdata==0.11.0
 # LingBot uses PyAV explicitly. Remove CUDA TorchCodec from rented images:
 # LeRobot otherwise selects it by module presence even if CUDA NPP is missing.
 uv pip uninstall --python "$(command -v python)" torchcodec >/dev/null 2>&1 || true

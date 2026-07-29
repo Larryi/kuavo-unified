@@ -607,11 +607,13 @@ def test_lingbot_v1_cloud_uses_blackwell_compatible_torch() -> None:
     requirements = (
         ROOT / "requirements_lingbot_cloud.txt"
     ).read_text(encoding="utf-8")
-    assert "--index-url https://download.pytorch.org/whl/cu128" in pipeline
+    assert "torch-2.7.1+cu128-${python_tag}-${python_tag}" in pipeline
+    assert "torchvision-0.22.1+cu128-${python_tag}-${python_tag}" in pipeline
+    assert "https://download.pytorch.org/whl/cu128/${name/+/%2B}" in pipeline
+    assert "--default-index https://pypi.org/simple" in pipeline
     assert "--reinstall-package torch" in pipeline
     assert "--reinstall-package torchvision" in pipeline
-    assert "torch==2.7.1 torchvision==0.22.1" in pipeline
-    assert "torch==2.7.1+cu128" not in pipeline
+    assert '"${torch_wheel}" "${torchvision_wheel}"' in pipeline
     assert 'assert torch.version.cuda == "12.8"' in pipeline
     assert "capability in torch.cuda.get_arch_list()" in pipeline
     assert 'torch.ones(1, device="cuda").item()' in pipeline
