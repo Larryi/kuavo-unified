@@ -1,0 +1,45 @@
+env:
+  real: true
+  env_name: Kuavo-Real
+  control_mode: joint
+  eef_type: leju_claw
+  which_arm: both
+  only_arm: true
+  ros_rate: 10
+  image_size: [848, 480]
+  obs_key_map:
+    head_cam_h: ["/cam_h/color/image_raw/compressed", "CompressedImage", 30, [848, 480]]
+    wrist_cam_l: ["/cam_l/color/image_raw/compressed", "CompressedImage", 30, [848, 480]]
+    wrist_cam_r: ["/cam_r/color/image_raw/compressed", "CompressedImage", 30, [848, 480]]
+    joint_q: ["/sensors_data_raw", "sensorsData", 500]
+    leju_claw: ["/leju_claw_state", "lejuClawState", 500]
+  arm_state_keys: ["joint_q", "gripper"]
+  frame_alignment: false
+  ratio: 1.0
+
+inference:
+  policy_type: client
+  pretrained_path: "/models/checkpoint"
+  client_protocol: msgpack_websocket
+  client_host: 127.0.0.1
+  client_port: 8000
+  client_connect_timeout_s: 300
+  client_request_timeout_s: 120
+  client_api_key_env: KUAVO_POLICY_API_KEY
+  client_action_dim: 16
+  client_state_dim: 16
+  client_execute_steps: __EXECUTE_STEPS__
+  client_validate_schema: true
+  client_autostart: true
+  client_autostart_backend: openpi
+  client_server_startup_timeout_s: 300
+  client_server_log: /tmp/openpi-policy-server.log
+  openpi_policy_config: pi05_kuavo_task2
+  task_prompt: "Sorting sleeves by weight"
+  eval_episodes: 1
+  max_episode_steps: 1000
+  device: cpu
+  task: task2
+  method: openpi
+  timestamp: runtime
+  epoch: mounted

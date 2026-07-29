@@ -9,9 +9,12 @@ from tools.kuavo_docker import (
     BACKENDS,
     TASKS,
     UsageError,
+    find_lingbot_v2_config,
     render_config,
     reject_sensitive_files,
+    runtime_checkpoint_mount,
     stage_classic_checkpoint,
+    stage_lingbot_v2_checkpoint,
     stage_openpi_checkpoint,
     stage_qwen_processor,
     validate_checkpoint,
@@ -146,6 +149,42 @@ def test_lingbot_incremental_checkpoint_is_rejected(tmp_path: Path) -> None:
     (checkpoint / "adapter_config.json").write_text("{}", encoding="utf-8")
     with pytest.raises(UsageError, match="完整 HF checkpoint"):
         validate_checkpoint(BACKENDS["lingbot-v1"], checkpoint)
+
+
+def test_lingbot_v2_config_is_found_and_staged_from_run_root(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "run"
+    checkpoint = run / "checkpoints/global_step_30000/hf_ckpt"
+    checkpoint.mkdir(parents=True)
+    (checkpoint / "model.safetensors").write_bytes(b"weights")
+    training_config = run / "lingbotvla_cli.yaml"
+    training_config.write_text("model: {}", encoding="utf-8")
+
+    assert find_lingbot_v2_config(checkpoint) == training_config
+    assert validate_checkpoint(BACKENDS["lingbot-v2"], checkpoint) == []
+
+    staged = tmp_path / "staged"
+    stage_lingbot_v2_checkpoint(checkpoint, staged)
+    assert (staged / "model.safetensors").read_bytes() == b"weights"
+    assert (staged / "lingbotvla_cli.yaml").read_text(encoding="utf-8") == "model: {}"
+
+
+def test_lingbot_v2_runtime_mount_uses_common_run_root(tmp_path: Path) -> None:
+    run = tmp_path / "run"
+    checkpoint = run / "checkpoints/global_step_30000/hf_ckpt"
+    checkpoint.mkdir(parents=True)
+    (checkpoint / "model.safetensors").write_bytes(b"weights")
+    (run / "lingbotvla_cli.yaml").write_text("model: {}", encoding="utf-8")
+
+    mount_root, policy_path = runtime_checkpoint_mount(
+        BACKENDS["lingbot-v2"], checkpoint, ""
+    )
+
+    assert mount_root == run
+    assert policy_path == (
+        "/models/checkpoint/checkpoints/global_step_30000/hf_ckpt"
+    )
 
 
 def test_classic_nonportable_epoch_processor_is_rejected(tmp_path: Path) -> None:
@@ -297,10 +336,12 @@ def test_release_uses_bounded_build_log(tmp_path: Path) -> None:
 
 
 def test_lingbot_v2_delivery_shell_is_available(tmp_path: Path) -> None:
-    checkpoint = tmp_path / "hf_ckpt"
-    checkpoint.mkdir()
+    run = tmp_path / "run"
+    checkpoint = run / "checkpoints/global_step_30000/hf_ckpt"
+    checkpoint.mkdir(parents=True)
     (checkpoint / "model.safetensors").write_bytes(b"weights")
-    (checkpoint / "lingbotvla_cli.yaml").write_text("model: {}", encoding="utf-8")
+    training_config = run / "lingbotvla_cli.yaml"
+    training_config.write_text("model: {}", encoding="utf-8")
     qwen = tmp_path / "qwen"
     make_qwen_processor(qwen)
     norm = tmp_path / "norm_stats.json"
@@ -322,7 +363,51 @@ def test_lingbot_v2_delivery_shell_is_available(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
     assert "--entrypoint bash kuavo-lingbot-v2:latest" in result.stdout
-    assert f"{checkpoint.resolve()}:/models/checkpoint:ro" in result.stdout
+    assert f"{run.resolve()}:/models/checkpoint:ro" in result.stdout
+
+
+def test_lingbot_v2_viewer_mounts_run_level_training_config(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "run"
+    checkpoint = run / "checkpoints/global_step_30000/hf_ckpt"
+    checkpoint.mkdir(parents=True)
+    (checkpoint / "model.safetensors").write_bytes(b"weights")
+    training_config = run / "lingbotvla_cli.yaml"
+    training_config.write_text("model: {}", encoding="utf-8")
+    qwen = tmp_path / "qwen"
+    make_qwen_processor(qwen)
+    norm = tmp_path / "norm_stats.json"
+    norm.write_text("{}", encoding="utf-8")
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    (dataset / "meta.json").write_text("{}", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            str(ROOT / "scripts/kuavo_docker"),
+            "viewer",
+            "--backend", "lingbot-v2",
+            "--checkpoint", str(checkpoint),
+            "--qwen", str(qwen),
+            "--norm-stats", str(norm),
+            "--dataset", str(dataset),
+            "--dry-run",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert f"{run.resolve()}:/models/checkpoint:ro" in result.stdout
+    assert (
+        "OPEN_LOOP_POLICY_PATH="
+        "/models/checkpoint/checkpoints/global_step_30000/hf_ckpt"
+        in result.stdout
+    )
+    assert ":/models/checkpoint/lingbotvla_cli.yaml:ro" not in result.stdout
 
 
 def test_backend_task_mismatch_is_rejected(tmp_path: Path) -> None:

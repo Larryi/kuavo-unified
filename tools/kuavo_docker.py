@@ -287,6 +287,18 @@ def validate_qwen_bundle(path: Path) -> list[str]:
     return warnings
 
 
+def find_lingbot_v2_config(checkpoint: Path) -> Path:
+    """Find the training config required to reconstruct a LingBot-v2 model."""
+    for parent in (checkpoint, *checkpoint.parents[:4]):
+        candidate = parent / "lingbotvla_cli.yaml"
+        if candidate.is_file():
+            return candidate
+    raise UsageError(
+        "LingBot-v2 checkpoint 或其上级目录缺少 lingbotvla_cli.yaml；"
+        "请保留训练 run 根目录中的配置文件。"
+    )
+
+
 def validate_checkpoint(spec: BackendSpec, path: Path) -> list[str]:
     nonempty_directory(path, "checkpoint")
     warnings: list[str] = []
@@ -300,12 +312,7 @@ def validate_checkpoint(spec: BackendSpec, path: Path) -> list[str]:
         if spec.key == "lingbot-v1" and not (path / "lingbotvla_cli.yaml").is_file():
             raise UsageError("LingBot-v1 hf_ckpt 缺少 lingbotvla_cli.yaml")
         if spec.key == "lingbot-v2":
-            ancestors = (path, *path.parents[:4])
-            if not any((parent / "lingbotvla_cli.yaml").is_file() for parent in ancestors):
-                raise UsageError(
-                    "LingBot-v2 checkpoint 或其上级目录缺少 lingbotvla_cli.yaml；"
-                    "打包前需要保留训练配置。"
-                )
+            find_lingbot_v2_config(path)
     elif spec.key in {"act", "dp"}:
         processor_names = {"policy_preprocessor.json", "policy_postprocessor.json"}
         visible = {item.name for item in files}
@@ -415,6 +422,32 @@ def checkpoint_container_path(subpath: str) -> str:
     if ".." in Path(cleaned).parts:
         raise UsageError("--checkpoint-subpath 不能包含 '..'")
     return "/models/checkpoint" + (f"/{cleaned}" if cleaned else "")
+
+
+def runtime_checkpoint_mount(
+    spec: BackendSpec,
+    checkpoint: Path,
+    checkpoint_subpath: str,
+) -> tuple[Path, str]:
+    """Return a single host mount and the corresponding in-container policy path."""
+    if spec.key != "lingbot-v2":
+        return checkpoint, checkpoint_container_path(checkpoint_subpath)
+
+    # LingBot-v2 HF exports normally live several levels below the run-level
+    # lingbotvla_cli.yaml. Mount the common run root once: Docker cannot add a
+    # nested file mount below an already read-only checkpoint bind mount.
+    training_config = find_lingbot_v2_config(checkpoint)
+    mount_root = training_config.parent
+    relative_checkpoint = checkpoint.relative_to(mount_root)
+    relative_parts = relative_checkpoint.parts
+    cleaned = checkpoint_subpath.strip().strip("/")
+    if ".." in Path(cleaned).parts:
+        raise UsageError("--checkpoint-subpath 不能包含 '..'")
+    policy_parts = (*relative_parts, *(Path(cleaned).parts if cleaned else ()))
+    policy_path = "/models/checkpoint"
+    if policy_parts:
+        policy_path += "/" + "/".join(policy_parts)
+    return mount_root, policy_path
 
 
 def render_config(
@@ -536,14 +569,16 @@ def prepare_session_config(
 def shell_command(args: argparse.Namespace, spec: BackendSpec) -> None:
     ensure_ros_ready(spec, "shell")
     checkpoint, qwen, norm, runtime_assets, tokenizer = collect_assets(args, spec)
-    policy_path = checkpoint_container_path(args.checkpoint_subpath)
+    checkpoint_mount, policy_path = runtime_checkpoint_mount(
+        spec, checkpoint, args.checkpoint_subpath
+    )
     config = prepare_session_config(args, spec, policy_path)
 
     command = [
         "docker", "run", "--rm", "-it", "--init",
         "--name", args.container_name or f"kuavo-{spec.key}-test",
         "--network", "host", "--gpus", args.gpus,
-        "-v", f"{checkpoint}:/models/checkpoint:ro",
+        "-v", f"{checkpoint_mount}:/models/checkpoint:ro",
         "-v", f"{config}:/run/kuavo/kuavo_env.yaml:ro",
         "-v",
         f"{config}:/root/kuavo_data_challenge/configs/deploy/kuavo_env.yaml:ro",
@@ -588,7 +623,9 @@ def viewer_command(args: argparse.Namespace, spec: BackendSpec) -> None:
         kind="dataset",
         directory=True,
     )
-    policy_path = checkpoint_container_path(args.checkpoint_subpath)
+    checkpoint_mount, policy_path = runtime_checkpoint_mount(
+        spec, checkpoint, args.checkpoint_subpath
+    )
     port = int(args.viewer_port)
     task = resolve_task(args, spec)
     viewer_policy_type = {
@@ -615,7 +652,7 @@ def viewer_command(args: argparse.Namespace, spec: BackendSpec) -> None:
         "--shm-size",
         "8g",
         "-v",
-        f"{checkpoint}:/models/checkpoint:ro",
+        f"{checkpoint_mount}:/models/checkpoint:ro",
         "-v",
         f"{dataset}:/data/dataset:ro",
         "-e",
@@ -654,7 +691,6 @@ def viewer_command(args: argparse.Namespace, spec: BackendSpec) -> None:
             "-v",
             f"{tokenizer}:/mnt/pqssd/pretrained/google/paligemma-3b-pt-224/tokenizer.model:ro",
         ]
-
     viewer_args = [
         "-m",
         "streamlit",
@@ -805,6 +841,21 @@ def stage_openpi_checkpoint(
     return destination
 
 
+def stage_lingbot_v2_checkpoint(
+    source: Path,
+    destination: Path,
+    *,
+    copy_function=shutil.copy2,
+) -> Path:
+    """Stage an HF checkpoint together with its run-level training config."""
+    training_config = find_lingbot_v2_config(source)
+    shutil.copytree(source, destination, copy_function=copy_function)
+    target = destination / "lingbotvla_cli.yaml"
+    if not target.is_file():
+        copy_function(training_config, target)
+    return destination
+
+
 def release_command(args: argparse.Namespace, spec: BackendSpec) -> None:
     ensure_ros_ready(spec, "release")
     task = resolve_task(args, spec)
@@ -864,6 +915,28 @@ def release_command(args: argparse.Namespace, spec: BackendSpec) -> None:
                 )
                 checkpoint_dir = openpi_staging / "checkpoint"
                 stage_openpi_checkpoint(
+                    checkpoint,
+                    checkpoint_dir,
+                    copy_function=os.link,
+                )
+        elif spec.key == "lingbot-v2":
+            if args.dry_run:
+                checkpoint_dir = Path("/planned/lingbot-v2-inference-checkpoint")
+            else:
+                # The HF export lives below the training run, while its
+                # reconstruction config normally lives at the run root.
+                # Hard-link the weights and add the small config without
+                # duplicating the checkpoint on disk.
+                lingbot_staging = Path(
+                    stack.enter_context(
+                        tempfile.TemporaryDirectory(
+                            prefix=".kuavo-lingbot-v2-release-",
+                            dir=checkpoint.parent,
+                        )
+                    )
+                )
+                checkpoint_dir = lingbot_staging / "checkpoint"
+                stage_lingbot_v2_checkpoint(
                     checkpoint,
                     checkpoint_dir,
                     copy_function=os.link,
