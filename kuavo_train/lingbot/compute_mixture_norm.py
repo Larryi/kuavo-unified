@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -29,6 +30,16 @@ class NormTrainingArguments(TrainingArguments):
     use_ema: bool = False
     ignore_depth: bool = False
     keep_last_checkpoints: int = 0
+
+    def __post_init__(self) -> None:
+        # The upstream LingBot arguments assume torchrun always populated
+        # these variables. Norm computation is intentionally a single plain
+        # Python process, so declare that topology before upstream validation.
+        os.environ.setdefault("LOCAL_RANK", "0")
+        os.environ.setdefault("RANK", "0")
+        os.environ.setdefault("WORLD_SIZE", "1")
+        os.environ.setdefault("LOCAL_WORLD_SIZE", "1")
+        super().__post_init__()
 
 
 @dataclass

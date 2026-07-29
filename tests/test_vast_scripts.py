@@ -611,3 +611,11 @@ def test_lingbot_v1_norm_accepts_trainer_only_config_fields() -> None:
         "train: NormTrainingArguments = "
         "field(default_factory=NormTrainingArguments)"
     ) in norm_script
+    for variable, value in (
+        ("LOCAL_RANK", "0"),
+        ("RANK", "0"),
+        ("WORLD_SIZE", "1"),
+        ("LOCAL_WORLD_SIZE", "1"),
+    ):
+        assert f'os.environ.setdefault("{variable}", "{value}")' in norm_script
+    assert "super().__post_init__()" in norm_script
