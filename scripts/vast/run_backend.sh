@@ -116,6 +116,7 @@ describe_profile() {
       echo "MoGe: ${MOGE_MODEL_REPO:-Ruicheng/moge-2-vitb-normal} -> ${WORK_ROOT}/models/moge-2-vitb-normal"
       echo "Depth/DINO: included in the LingBot-v2 base repository"
       echo "Environment: dedicated Python 3.12 / PyTorch 2.8.0 LingBot-v2 image"
+      echo "Checkpoint interval: ${TRAIN_SAVE_STEPS:-task config default} steps"
       echo "Dispatch: python -m kuavo_train.train_lingbot_v2"
       ;;
   esac

@@ -114,6 +114,18 @@ def main(cfg: DictConfig) -> None:
     ]
     if norm_stats := os.getenv("LINGBOT_V2_NORM_STATS", "").strip():
         extra_args.extend(["--data.norm_stats_file", norm_stats])
+    if save_steps_raw := os.getenv("TRAIN_SAVE_STEPS", "").strip():
+        try:
+            save_steps = int(save_steps_raw)
+        except ValueError as exc:
+            raise ValueError(
+                f"TRAIN_SAVE_STEPS must be a positive integer, got {save_steps_raw!r}"
+            ) from exc
+        if save_steps <= 0:
+            raise ValueError(
+                f"TRAIN_SAVE_STEPS must be a positive integer, got {save_steps}"
+            )
+        extra_args.extend(["--train.save_steps", str(save_steps)])
     extra_args.extend(str(item) for item in policy_cfg.get("extra_args", []))
 
     code = CustomLingbotPolicyWrapper(wrapper_cfg).launch(repo_root=repo_root, extra_args=extra_args)

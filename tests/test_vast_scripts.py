@@ -580,6 +580,15 @@ def test_lingbot_v2_cloud_assets_are_forwarded_as_environment() -> None:
     assert "--train.align_params.depth.moge_path" not in launcher
 
 
+def test_lingbot_v2_save_frequency_can_be_overridden() -> None:
+    launcher = (
+        ROOT / "kuavo_train" / "train_lingbot_v2.py"
+    ).read_text(encoding="utf-8")
+    assert 'os.getenv("TRAIN_SAVE_STEPS"' in launcher
+    assert '"--train.save_steps"' in launcher
+    assert "TRAIN_SAVE_STEPS must be a positive integer" in launcher
+
+
 def test_lingbot_cloud_downloads_qwen_processor_without_base_weights() -> None:
     runner = REMOTE_RUNNER.read_text(encoding="utf-8")
     v1_pipeline = (

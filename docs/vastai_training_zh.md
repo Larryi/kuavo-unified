@@ -137,6 +137,16 @@ LingBot-v2 会自动创建 Python 3.12/PyTorch 2.8 环境，并下载：
 - `Qwen/Qwen3-VL-4B-Instruct`（tokenizer/processor）；
 - `Ruicheng/moge-2-vitb-normal`（`model.pt`）。
 
+LingBot-v2 的 checkpoint 保存间隔默认由任务配置决定（Task1 为 1000
+步，Task2 为 5000 步）。启动前可用正整数环境变量覆盖：
+
+```bash
+export TRAIN_SAVE_STEPS=2000
+```
+
+该变量只改变保存间隔；`keep_last_checkpoints: 1` 仍只保留最新一个完整
+DCP checkpoint。
+
 MoGe 的 `utils3d` 必须使用其锁定的
 `EasternJournalist/utils3d@3fab839f...`（发行版本 1.3）。不要安装 PyPI
 上的同名 `utils3d 0.1.x`；后者是另一个项目，依赖当前 Python 3.12 环境
