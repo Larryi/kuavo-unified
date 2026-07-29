@@ -318,7 +318,7 @@ retry 3 uv pip install --python "$(command -v python)" \
     --reinstall-package torch \
     --reinstall-package torchvision \
     --reinstall-package torchdata \
-    torch==2.7.1+cu128 torchvision==0.22.1+cu128 torchdata==0.11.0
+    torch==2.7.1 torchvision==0.22.1 torchdata==0.11.0
 # LingBot uses PyAV explicitly. Remove CUDA TorchCodec from rented images:
 # LeRobot otherwise selects it by module presence even if CUDA NPP is missing.
 uv pip uninstall --python "$(command -v python)" torchcodec >/dev/null 2>&1 || true

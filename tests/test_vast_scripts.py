@@ -610,8 +610,8 @@ def test_lingbot_v1_cloud_uses_blackwell_compatible_torch() -> None:
     assert "--index-url https://download.pytorch.org/whl/cu128" in pipeline
     assert "--reinstall-package torch" in pipeline
     assert "--reinstall-package torchvision" in pipeline
-    assert "torch==2.7.1+cu128" in pipeline
-    assert "torchvision==0.22.1+cu128" in pipeline
+    assert "torch==2.7.1 torchvision==0.22.1" in pipeline
+    assert "torch==2.7.1+cu128" not in pipeline
     assert 'assert torch.version.cuda == "12.8"' in pipeline
     assert "capability in torch.cuda.get_arch_list()" in pipeline
     assert 'torch.ones(1, device="cuda").item()' in pipeline
