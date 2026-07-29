@@ -1,4 +1,4 @@
-# The pipeline installs the locked PyTorch CUDA stack from the official cu126
+# The pipeline installs the locked PyTorch CUDA stack from the official cu128
 # index before this file. LeRobot is installed separately with --no-deps because its optional
 # rerun-sdk visualization dependency requires NumPy 2 and is not used here.
 transformers==4.53.3

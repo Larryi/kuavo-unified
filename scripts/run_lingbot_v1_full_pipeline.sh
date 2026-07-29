@@ -306,7 +306,7 @@ fi
 cd "${CODE_DIR}"
 PIPELINE_PHASE="install dependencies"
 retry 3 uv pip install --python "$(command -v python)" \
-    --index-url https://download.pytorch.org/whl/cu126 \
+    --index-url https://download.pytorch.org/whl/cu128 \
     --reinstall-package torchdata \
     torch==2.7.1 torchvision==0.22.1 torchdata==0.11.0
 # LingBot uses PyAV explicitly. Remove CUDA TorchCodec from rented images:
@@ -367,15 +367,22 @@ from kuavo_train.lingbot.tasks.vla import train_lingbotvla
 assert torch.cuda.is_available(), "CUDA unavailable"
 assert torch.cuda.device_count() == int(__import__('os').environ['GPU_COUNT']), torch.cuda.device_count()
 assert torch.__version__.split('+')[0] == "2.7.1", torch.__version__
-assert torch.version.cuda == "12.6", torch.version.cuda
+assert torch.version.cuda == "12.8", torch.version.cuda
 assert torchvision.__version__.split('+')[0] == "0.22.1", torchvision.__version__
 assert torchdata.__version__.split('+')[0] == "0.11.0", torchdata.__version__
 assert flash_attn.__version__ == __import__('os').environ['FLASH_ATTN_VERSION'], flash_attn.__version__
+major, minor = torch.cuda.get_device_capability(0)
+capability = f"sm_{major}{minor}"
+assert capability in torch.cuda.get_arch_list(), (
+    capability,
+    torch.cuda.get_arch_list(),
+)
+assert torch.ones(1, device="cuda").item() == 1
 print(
     f"training import smoke test passed: torch={torch.__version__}, "
     f"cuda={torch.version.cuda}, torchvision={torchvision.__version__}, "
     f"torchdata={torchdata.__version__}, video_backend=pyav, transformers={transformers.__version__}, "
-    f"flash_attn={flash_attn.__version__}"
+    f"flash_attn={flash_attn.__version__}, capability={capability}"
 )
 PY
 

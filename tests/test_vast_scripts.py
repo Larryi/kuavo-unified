@@ -600,6 +600,21 @@ def test_lingbot_cloud_downloads_qwen_processor_without_base_weights() -> None:
     assert '--include \\\n        "config.json"' in v1_pipeline
 
 
+def test_lingbot_v1_cloud_uses_blackwell_compatible_torch() -> None:
+    pipeline = (
+        ROOT / "scripts" / "run_lingbot_v1_full_pipeline.sh"
+    ).read_text(encoding="utf-8")
+    requirements = (
+        ROOT / "requirements_lingbot_cloud.txt"
+    ).read_text(encoding="utf-8")
+    assert "--index-url https://download.pytorch.org/whl/cu128" in pipeline
+    assert 'assert torch.version.cuda == "12.8"' in pipeline
+    assert "capability in torch.cuda.get_arch_list()" in pipeline
+    assert 'torch.ones(1, device="cuda").item()' in pipeline
+    assert "official cu128" in requirements
+    assert "cu126" not in requirements
+
+
 def test_lingbot_v1_norm_accepts_trainer_only_config_fields() -> None:
     norm_script = (
         ROOT / "kuavo_train" / "lingbot" / "compute_mixture_norm.py"
