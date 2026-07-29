@@ -598,3 +598,16 @@ def test_lingbot_cloud_downloads_qwen_processor_without_base_weights() -> None:
     assert '"*processor_config.json"' in runner
     assert '"model-*.safetensors"' not in runner
     assert '--include \\\n        "config.json"' in v1_pipeline
+
+
+def test_lingbot_v1_norm_accepts_trainer_only_config_fields() -> None:
+    norm_script = (
+        ROOT / "kuavo_train" / "lingbot" / "compute_mixture_norm.py"
+    ).read_text(encoding="utf-8")
+    assert "class NormTrainingArguments(TrainingArguments):" in norm_script
+    for field_name in ("use_ema", "ignore_depth", "keep_last_checkpoints"):
+        assert f"    {field_name}:" in norm_script
+    assert (
+        "train: NormTrainingArguments = "
+        "field(default_factory=NormTrainingArguments)"
+    ) in norm_script

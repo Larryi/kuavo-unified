@@ -23,10 +23,19 @@ import lingbotvla.utils.normalize as normalize
 
 
 @dataclass
+class NormTrainingArguments(TrainingArguments):
+    """Accept Kuavo trainer-only options while computing dataset statistics."""
+
+    use_ema: bool = False
+    ignore_depth: bool = False
+    keep_last_checkpoints: int = 0
+
+
+@dataclass
 class Arguments:
     model: ModelArguments = field(default_factory=ModelArguments)
     data: DataArguments = field(default_factory=DataArguments)
-    train: TrainingArguments = field(default_factory=TrainingArguments)
+    train: NormTrainingArguments = field(default_factory=NormTrainingArguments)
 
 
 def main() -> int:
