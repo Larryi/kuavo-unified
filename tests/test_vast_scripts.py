@@ -618,4 +618,8 @@ def test_lingbot_v1_norm_accepts_trainer_only_config_fields() -> None:
         ("LOCAL_WORLD_SIZE", "1"),
     ):
         assert f'os.environ.setdefault("{variable}", "{value}")' in norm_script
+    assert (
+        "self.micro_batch_size * self.gradient_accumulation_steps"
+        in norm_script
+    )
     assert "super().__post_init__()" in norm_script

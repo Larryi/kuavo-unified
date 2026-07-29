@@ -39,6 +39,12 @@ class NormTrainingArguments(TrainingArguments):
         os.environ.setdefault("RANK", "0")
         os.environ.setdefault("WORLD_SIZE", "1")
         os.environ.setdefault("LOCAL_WORLD_SIZE", "1")
+        # The source YAML describes the later multi-GPU training job. This
+        # helper is one process and only consumes micro_batch_size/chunk_size,
+        # so reconcile global_batch_size solely for upstream validation.
+        self.global_batch_size = (
+            self.micro_batch_size * self.gradient_accumulation_steps
+        )
         super().__post_init__()
 
 
