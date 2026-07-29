@@ -2,7 +2,6 @@ import json
 from copy import deepcopy
 import os
 import re
-import shutil
 import sys
 import time
 from dataclasses import asdict, dataclass, field
@@ -27,6 +26,11 @@ from kuavo_train.lingbot.compat import (
     patch_lingbot_model_loader,
     patch_pi0_config_for_lingbot,
     patch_transformers_for_lingbot,
+)
+from kuavo_train.lingbot.checkpoint_retention import (
+    checkpoint_is_complete as _checkpoint_is_complete,
+    prepare_checkpoint_slot,
+    prune_old_checkpoints,
 )
 from kuavo_train.dataset_mixture import VirtualWeightedDataset, load_dataset_sources
 
@@ -475,37 +479,21 @@ class Arguments:
     train: "MyTrainingArguments" = field(default_factory=MyTrainingArguments)
 
 
-def _checkpoint_step(path: Path) -> int:
-    match = re.fullmatch(r"global_step_(\d+)", path.name)
-    return int(match.group(1)) if match else -1
-
-
-def _checkpoint_is_complete(path: Path, world_size: int) -> bool:
-    return (
-        (path / "model" / ".metadata").is_file()
-        and (path / "optimizer" / ".metadata").is_file()
-        and all(
-            (path / "extra_state" / f"extra_state_rank_{rank}.pt").is_file()
-            for rank in range(world_size)
-        )
-    )
-
-
 def _prune_old_checkpoints(checkpoint_root: str, keep: int, world_size: int) -> None:
-    if keep <= 0:
-        return
-    root = Path(checkpoint_root)
-    complete = sorted(
-        (
-            path
-            for path in root.glob("global_step_*")
-            if _checkpoint_is_complete(path, world_size)
-        ),
-        key=_checkpoint_step,
-    )
-    for stale in complete[:-keep]:
-        shutil.rmtree(stale)
+    for stale in prune_old_checkpoints(checkpoint_root, keep, world_size):
         logger.info_rank0(f"Removed stale checkpoint after successful replacement: {stale}")
+
+
+def _prepare_checkpoint_slot(
+    checkpoint_root: str,
+    upcoming_step: int,
+    keep: int,
+    world_size: int,
+) -> None:
+    for stale in prepare_checkpoint_slot(
+        checkpoint_root, upcoming_step, keep, world_size
+    ):
+        logger.info_rank0(f"Freed checkpoint space before replacement save: {stale}")
 
 
 def main():
@@ -1029,6 +1017,14 @@ def main():
                         "torch_rng_state": torch.get_rng_state(),
                     },
                 }
+                if args.train.global_rank == 0:
+                    _prepare_checkpoint_slot(
+                        args.train.save_checkpoint_path,
+                        global_step,
+                        args.train.keep_last_checkpoints,
+                        args.train.world_size,
+                    )
+                dist.barrier()
                 Checkpointer.save(args.train.save_checkpoint_path, state, global_steps=global_step)
                 dist.barrier()
                 logger.info_rank0(f"Distributed checkpoint saved at {save_checkpoint_path} successfully!")
@@ -1084,6 +1080,14 @@ def main():
                     "torch_rng_state": torch.get_rng_state(),
                 },
             }
+            if args.train.global_rank == 0:
+                _prepare_checkpoint_slot(
+                    args.train.save_checkpoint_path,
+                    global_step,
+                    args.train.keep_last_checkpoints,
+                    args.train.world_size,
+                )
+            dist.barrier()
             Checkpointer.save(args.train.save_checkpoint_path, state, global_steps=global_step)
             dist.barrier()
             logger.info_rank0(f"Distributed checkpoint saved at {save_checkpoint_path} successfully!")
@@ -1142,6 +1146,14 @@ def main():
                 "torch_rng_state": torch.get_rng_state(),
             },
         }
+        if args.train.global_rank == 0:
+            _prepare_checkpoint_slot(
+                args.train.save_checkpoint_path,
+                global_step,
+                args.train.keep_last_checkpoints,
+                args.train.world_size,
+            )
+        dist.barrier()
         Checkpointer.save(
             args.train.save_checkpoint_path, state, global_steps=global_step
         )

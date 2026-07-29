@@ -671,3 +671,4 @@ def test_lingbot_v1_trainer_forwards_required_model_config() -> None:
     ):
         assert f"config_kwargs['{field_name}']" in trainer
     assert "use_ki" not in trainer
+    assert trainer.count("_prepare_checkpoint_slot(") >= 4
