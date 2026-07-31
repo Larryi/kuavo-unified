@@ -420,7 +420,10 @@ class ArmMove:
     def run(self) -> None:
         """Execute run"""
         from kuavo_deploy.src.eval.real_single_test import kuavo_eval
-        kuavo_eval(config=self.config, env=self.env)
+        from kuavo_deploy.utils.policy_server_manager import managed_policy_server
+
+        with managed_policy_server(self.inference_config, log_model):
+            kuavo_eval(config=self.config, env=self.env)
 
 def parse_args():
     """Parse command line parameters"""

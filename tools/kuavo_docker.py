@@ -107,7 +107,7 @@ TASKS = {
         "Pick and Place the safety belt, cable and pin connector",
         8,
         8,
-        robot_name="kuavo_v1_right_arm_absolute",
+        robot_name="kuavo_v1_right_arm",
     ),
     "task2-lingbot-v1": TaskSpec(
         "task2-lingbot-v1", "lingbot-v1",
@@ -450,6 +450,24 @@ def runtime_checkpoint_mount(
     return mount_root, policy_path
 
 
+def openpi_checkpoint_asset_id(checkpoint: Path) -> str | None:
+    """Return the sole OpenPI checkpoint asset ID containing norm stats."""
+    assets_root = checkpoint / "assets"
+    if not assets_root.is_dir():
+        return None
+    candidates = sorted(
+        item.parent.name
+        for item in assets_root.glob("*/norm_stats.json")
+        if item.is_file()
+    )
+    if len(candidates) > 1:
+        raise UsageError(
+            "OpenPI checkpoint 包含多个 Norm asset ID，无法自动选择: "
+            + ", ".join(candidates)
+        )
+    return candidates[0] if candidates else None
+
+
 def render_config(
     source: Path,
     destination: Path,
@@ -583,6 +601,10 @@ def shell_command(args: argparse.Namespace, spec: BackendSpec) -> None:
         "-v",
         f"{config}:/root/kuavo_data_challenge/configs/deploy/kuavo_env.yaml:ro",
     ]
+    if spec.key == "openpi":
+        asset_id = openpi_checkpoint_asset_id(checkpoint)
+        if asset_id:
+            command += ["-e", f"KUAVO_MIX_ASSET_ID={asset_id}"]
     if qwen:
         command += ["-v", f"{qwen}:/assets/qwen:ro"]
     if norm:
@@ -655,6 +677,11 @@ def viewer_command(args: argparse.Namespace, spec: BackendSpec) -> None:
         f"{checkpoint_mount}:/models/checkpoint:ro",
         "-v",
         f"{dataset}:/data/dataset:ro",
+        # Viewer is a local diagnostics tool. Overlay the current source so UI
+        # fixes do not require rebuilding a multi-gigabyte runtime image.
+        "-v",
+        f"{REPO_ROOT / 'tools/open_loop_viewer.py'}:"
+        "/root/kuavo_data_challenge/tools/open_loop_viewer.py:ro",
         "-e",
         "OPEN_LOOP_DATASET_ROOT=/data/dataset",
         "-e",
@@ -703,6 +730,9 @@ def viewer_command(args: argparse.Namespace, spec: BackendSpec) -> None:
     ]
     if spec.key == "openpi":
         openpi_config = args.openpi_config or task.openpi_config
+        asset_id = openpi_checkpoint_asset_id(checkpoint)
+        if asset_id:
+            command += ["-e", f"KUAVO_MIX_ASSET_ID={asset_id}"]
         command += [
             "-e",
             f"OPENPI_POLICY_CONFIG={openpi_config}",
@@ -729,11 +759,22 @@ def viewer_command(args: argparse.Namespace, spec: BackendSpec) -> None:
         ]
     else:
         if spec.key == "lingbot-v1":
+            robot_name = args.robot_name or task.robot_name
+            robot_config = (
+                REPO_ROOT / "configs" / "robot_configs" / f"{robot_name}.yaml"
+            )
+            if not robot_config.is_file():
+                raise UsageError(
+                    f"LingBot-v1 robot config 不存在: {robot_config}"
+                )
             command += [
+                "-v",
+                f"{robot_config}:"
+                f"/root/kuavo_data_challenge/configs/robot_configs/{robot_name}.yaml:ro",
                 "-e",
                 "OPEN_LOOP_LINGBOT_ROOT=/root/kuavo_data_challenge/third_party/lingbot-vla",
                 "-e",
-                f"OPEN_LOOP_ROBOT_NAME={args.robot_name or task.robot_name}",
+                f"OPEN_LOOP_ROBOT_NAME={robot_name}",
             ]
         command += [
             "--entrypoint",

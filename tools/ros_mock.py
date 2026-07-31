@@ -81,6 +81,7 @@ COMMAND_TOPICS = (
     "/humanoid_switch_gait_by_name",
     "/cmd_pose_world",
     "/leju_claw_command",
+    "/control_robot_hand_position",
 )
 
 
@@ -176,6 +177,7 @@ class SyntheticObservationPublisher:
     def __init__(self):
         self.sensor_pub = rospy.Publisher("/sensors_data_raw", sensorsData, queue_size=10)
         self.gripper_pub = rospy.Publisher("/leju_claw_state", lejuClawState, queue_size=10)
+        self.dexhand_pub = rospy.Publisher("/dexhand/state", JointState, queue_size=10)
         self.rgb_pubs = [rospy.Publisher(topic, CompressedImage, queue_size=2) for topic in RGB_TOPICS]
         self.depth_pubs = [rospy.Publisher(topic, CompressedImage, queue_size=2) for topic in DEPTH_TOPICS]
 
@@ -216,6 +218,20 @@ class SyntheticObservationPublisher:
         gripper.data.velocity = [0.0, 0.0]
         gripper.data.effort = [0.0, 0.0]
         self.gripper_pub.publish(gripper)
+
+        # Task3 uses the QiangNao dexterous hand.  The deployment config keeps
+        # one open/close value per hand, but the ROS state topic carries all
+        # six joints for each hand and selects indices 0 and 6 afterwards.
+        dexhand = JointState()
+        dexhand.header.stamp = stamp
+        dexhand.name = [
+            *(f"left_hand_joint_{index}" for index in range(6)),
+            *(f"right_hand_joint_{index}" for index in range(6)),
+        ]
+        dexhand.position = [0.0] * 12
+        dexhand.velocity = [0.0] * 12
+        dexhand.effort = [0.0] * 12
+        self.dexhand_pub.publish(dexhand)
 
     def publish_images(self, _event):
         stamp = rospy.Time.now()
@@ -286,7 +302,7 @@ def main():
     synthetic_observations = SyntheticObservationPublisher()
     command_sinks = install_command_sinks()
     rospy.loginfo(
-        "[mock] synthetic RGB/depth/joint/gripper observations and control sinks enabled"
+        "[mock] synthetic RGB/depth/joint/claw/dexhand observations and control sinks enabled"
     )
 
     # 后台线程: 周期触发 /simulator/init

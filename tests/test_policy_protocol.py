@@ -314,6 +314,73 @@ def test_ros_policy_client_consumes_action_chunk(monkeypatch) -> None:
     assert client._client.infer_calls == 2
 
 
+def test_ros_policy_client_rtc_replaces_queue_with_delay_aligned_chunk(
+    monkeypatch,
+    caplog,
+) -> None:
+    rtc_done = threading.Event()
+    clients = []
+
+    class FakeProtocolClient:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.metadata = SimpleNamespace(action_dim=8, action_horizon=4)
+            self.requests = []
+            clients.append(self)
+
+        def get_server_metadata(self):
+            return {"backend": "openpi", "action_dim": 8, "action_horizon": 4}
+
+        def infer(self, request):
+            self.requests.append(request)
+            offset = 100 if "rtc" in request else 0
+            actions = np.stack(
+                [
+                    np.full(8, offset + step, dtype=np.float32)
+                    for step in range(4)
+                ]
+            )
+            if "rtc" in request:
+                rtc_done.set()
+            return {"actions": actions}
+
+        def health(self):
+            return True
+
+        def reset(self):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("kuavo_policy_protocol.WebSocketPolicyClient", FakeProtocolClient)
+    monkeypatch.setenv("KUAVO_OPENPI_RTC_ENABLED", "1")
+    monkeypatch.setenv("KUAVO_OPENPI_RTC_OPEN_LOOP_HORIZON", "4")
+    monkeypatch.setenv("KUAVO_OPENPI_RTC_QUEUE_THRESHOLD", "3")
+    monkeypatch.setenv("KUAVO_OPENPI_RTC_EXECUTION_HORIZON", "2")
+    monkeypatch.setenv("KUAVO_OPENPI_RTC_WARMUP", "0")
+
+    from kuavo_deploy.kuavo_service.client import PolicyClient
+
+    client = PolicyClient(task_prompt="task prompt", action_dim=8, state_dim=8)
+    observation = valid_observation()
+    observation.pop("prompt")
+
+    first = np.asarray(client.select_action(observation))
+    second = np.asarray(client.select_action(observation))
+    assert rtc_done.wait(1.0)
+    third = np.asarray(client.select_action(observation))
+
+    np.testing.assert_array_equal(first, np.zeros((1, 8), dtype=np.float32))
+    np.testing.assert_array_equal(second, np.ones((1, 8), dtype=np.float32))
+    np.testing.assert_array_equal(third, np.full((1, 8), 101, dtype=np.float32))
+    rtc_request = clients[1].requests[0]["rtc"]
+    assert rtc_request["prev_actions"].shape == (2, 8)
+    assert rtc_request["execution_horizon"] == 2
+    assert "OpenPI RTC ENABLED" in caplog.text
+    client.close()
+
+
 def test_real_websocket_server_openpi_flow() -> None:
     from websockets.exceptions import ConnectionClosed
     from websockets.sync.server import serve

@@ -860,10 +860,19 @@ def main() -> None:
                 norm_stats_file = st.text_input("Norm stats file", default_norm_stats)
                 use_compile = st.checkbox("Use torch.compile", value=False)
             else:
+                v1_robot_names = [
+                    "kuavo_v1_right_arm_absolute",
+                    "kuavo_v1_right_arm",
+                    "kuavo_v1_bimanual",
+                ]
                 robot_name = st.selectbox(
                     "LingBot V1 robot name",
-                    ["kuavo_v1_right_arm_absolute", "kuavo_v1_right_arm"],
-                    index=1 if DEFAULT_ROBOT_NAME == "kuavo_v1_right_arm" else 0,
+                    v1_robot_names,
+                    index=(
+                        v1_robot_names.index(DEFAULT_ROBOT_NAME)
+                        if DEFAULT_ROBOT_NAME in v1_robot_names
+                        else 1
+                    ),
                 )
                 norm_stats_file = st.text_input("Norm stats file", DEFAULT_NORM_STATS)
                 use_compile = False

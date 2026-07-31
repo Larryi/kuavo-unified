@@ -34,7 +34,7 @@ inference:
   lingbot_norm_stats_file: /assets/norm_stats/norm_stats.json
   # This shipped checkpoint was trained by the legacy custom Task1 loader with
   # absolute arm actions. Do not use the newer relative-action profile here.
-  lingbot_robot_name: kuavo_v1_right_arm_absolute
+  lingbot_robot_name: kuavo_v1_right_arm
   lingbot_use_length: 5
   lingbot_chunk_ret: false
   lingbot_use_compile: false
